@@ -1,6 +1,6 @@
 import { createContext } from 'preact'
 import { useContext, useEffect, useRef } from 'preact/hooks'
-import { X } from 'lucide-preact'
+import { ExternalLink, X } from 'lucide-preact'
 
 export const AppContext = createContext(null)
 export const useApp = () => useContext(AppContext)
@@ -166,4 +166,23 @@ export function downloadBase64({ base64, mimeType, fileName }) {
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+export const googleDocUrl = (fileId) => `https://docs.google.com/document/d/${encodeURIComponent(fileId)}/edit`
+
+// 書類テンプレの雛形（Google ドキュメント）を新しいタブで開く。モックモードの雛形は実在しないので出さない
+export function DocLink({ fileId, size = 'md', children = 'Googleドキュメントで開く' }) {
+  const { api } = useApp()
+  if (!fileId || api.mock) return null
+  return (
+    <a
+      href={googleDocUrl(fileId)}
+      target="_blank"
+      rel="noopener noreferrer"
+      class={cx('inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl font-medium whitespace-nowrap transition', variants[size === 'sm' ? 'ghost' : 'outline'], sizes[size])}
+    >
+      <ExternalLink class="size-4" />
+      {children}
+    </a>
+  )
 }

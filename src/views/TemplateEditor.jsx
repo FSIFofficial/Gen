@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { ArrowLeft, Calendar, FileText, Save, Scissors } from 'lucide-preact'
 import { COMMON_RANK, DOCUMENT_FORMATS, buildContext, countText, extractKeys, formatDate, mockValues, placeholderAt, renderSegments, splitXThread } from '../lib/engine.js'
-import { Alert, Badge, Button, Eyebrow, Label, Modal, Spinner, activeOnly, card, copyText, cx, inputCls, useApp } from '../ui/ui.jsx'
+import { Alert, Badge, Button, DocLink, Eyebrow, Label, Modal, Spinner, activeOnly, card, copyText, cx, inputCls, useApp } from '../ui/ui.jsx'
 import { Segments } from './Create.jsx'
 
 const ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画像']
@@ -232,7 +232,10 @@ export function TemplateEditor({ mode, template, onClose }) {
                 />
                 <Button variant="outline" icon={loadingDoc ? Spinner : FileText} onClick={loadDocument} disabled={!meta.fileId || loadingDoc}>読み込む</Button>
               </div>
-              <p class="mt-2 text-xs text-slate-400">雛形を直したら、ここで保存し直すと差し込み項目とプレビューが更新されます。</p>
+              <div class="mt-3 flex flex-wrap items-center gap-3">
+                <DocLink fileId={meta.fileId} />
+                <p class="text-xs text-slate-400">雛形の文面や書式は Google ドキュメントで直します。直したら「読み込む」を押して保存すると、差し込み項目とプレビューに反映されます。</p>
+              </div>
             </div>
           )}
 

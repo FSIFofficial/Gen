@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks'
 import { Ban, Copy, Lock, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-preact'
-import { COMMON_RANK, formatDate } from '../lib/engine.js'
-import { Alert, Badge, Button, Empty, Eyebrow, ItemInput, Label, Modal, Spinner, card, cx, formatDateTime, inputCls, textareaCls, useApp } from '../ui/ui.jsx'
+import { COMMON_RANK, formatDate, isDocumentTemplate } from '../lib/engine.js'
+import { Alert, Badge, Button, DocLink, Empty, Eyebrow, ItemInput, Label, Modal, Spinner, card, cx, formatDateTime, inputCls, textareaCls, useApp } from '../ui/ui.jsx'
 import { TemplateEditor } from './TemplateEditor.jsx'
 
 const ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画像']
@@ -416,7 +416,12 @@ function TemplateList({ onOpen }) {
                       record={t}
                       def={def}
                       onEdit={(rec) => onOpen({ mode: 'edit', template: rec })}
-                      extra={<Button variant="ghost" size="sm" icon={Copy} onClick={() => onOpen({ mode: 'create', template: t })} title="この内容をコピーして新しいテンプレートを作ります">複製</Button>}
+                      extra={
+                        <>
+                          {isDocumentTemplate(t) && <DocLink fileId={t.fileId} size="sm">ドキュメント</DocLink>}
+                          <Button variant="ghost" size="sm" icon={Copy} onClick={() => onOpen({ mode: 'create', template: t })} title="この内容をコピーして新しいテンプレートを作ります">複製</Button>
+                        </>
+                      }
                     />
                   </td>
                 </tr>

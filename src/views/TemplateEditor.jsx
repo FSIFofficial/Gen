@@ -1,18 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { ArrowLeft, Calendar, FileText, Save, Scissors } from 'lucide-preact'
-import { COMMON_RANK, DOCUMENT_FORMATS, buildContext, countText, extractKeys, formatDate, mockValues, placeholderAt, renderSegments, splitXThread } from '../lib/engine.js'
+import { COMMON_RANK, DOCUMENT_FORMATS, IMAGE_FORMAT, LOGO_KEY, buildContext, driveIdFrom, countText, extractKeys, formatDate, mockValues, placeholderAt, renderSegments, splitXThread } from '../lib/engine.js'
 import { Alert, Badge, Button, DocLink, Eyebrow, Label, Modal, Spinner, activeOnly, card, copyText, cx, inputCls, useApp } from '../ui/ui.jsx'
 import { Segments } from './Create.jsx'
 
 const ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画像']
 const SAMPLE_DATE = '2026-09-24'
 
-// Google ドキュメントの URL でも ID でも受け付ける
-export function docIdFrom(input) {
-  const s = String(input || '').trim()
-  const m = /\/d\/([a-zA-Z0-9_-]{10,})/.exec(s) || /[?&]id=([a-zA-Z0-9_-]{10,})/.exec(s)
-  return m ? m[1] : s
-}
+// 出力形式の種類：テキスト / 書類（Google ドキュメント）/ 告知画像（Google スライド）
+const formatKind = (format) => (format === IMAGE_FORMAT ? 'slides' : DOCUMENT_FORMATS.includes(format) ? 'document' : 'text')
 
 export function TemplateEditor({ mode, template, onClose }) {
   const { api, data, adminCall, reload, notify } = useApp()
@@ -33,7 +29,10 @@ export function TemplateEditor({ mode, template, onClose }) {
   const refs = useRef({})
   const pendingCaret = useRef(null)
 
-  const isDocument = DOCUMENT_FORMATS.includes(meta.format)
+  // isDocument は雛形ファイル（ドキュメント・スライド）から作るテンプレ全般。isSlides は告知画像
+  const isSlides = meta.format === IMAGE_FORMAT
+  const isDocument = formatKind(meta.format) !== 'text'
+  const fileLabel = isSlides ? 'Google スライド' : 'Google ドキュメント'
   const media = data.media.find((m) => m.id === meta.mediaId)
   const fieldDefs = useMemo(() => {
     if (isDocument) return [{ fieldKey: '本文', label: '雛形の内容' }]
@@ -97,7 +96,7 @@ export function TemplateEditor({ mode, template, onClose }) {
   }
 
   const usedKeys = extractKeys(Object.values(fields))
-  const unknownKeys = usedKeys.filter((k) => !itemsByKey[k] && !settingKeys.includes(k))
+  const unknownKeys = usedKeys.filter((k) => !itemsByKey[k] && !settingKeys.includes(k) && k !== LOGO_KEY)
 
   const save = async (skipUnknownCheck) => {
     if (!skipUnknownCheck && unknownKeys.length) {
@@ -144,7 +143,7 @@ export function TemplateEditor({ mode, template, onClose }) {
   const loadDocument = async () => {
     setLoadingDoc(true)
     try {
-      const { text } = await api.call('readDocument', { fileId: meta.fileId })
+      const { text } = await api.call('readDocument', { fileId: meta.fileId, format: meta.format })
       setFields({ 本文: text })
       notify('雛形を読み込みました')
     } catch (e) {
@@ -195,46 +194,52 @@ export function TemplateEditor({ mode, template, onClose }) {
                 {data.ranks.map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}
               </select>
             </Label>
-            <Label label="出力形式" hint="PDF・Docx は Google ドキュメントの雛形に差し込んで書き出します">
+            <Label label="出力形式" hint="PDF・Docx は Google ドキュメント、画像は Google スライドの雛形に差し込んで書き出します">
               <select
                 value={meta.format}
                 onChange={(e) => {
                   const format = e.currentTarget.value
                   // テキストと書類を切り替えたら本文は引き継がない
-                  if (DOCUMENT_FORMATS.includes(format) !== isDocument) setFields({})
+                  if (formatKind(format) !== formatKind(meta.format)) setFields({})
                   setMeta({ ...meta, format })
                 }}
                 class={inputCls}
               >
                 <option>テキスト</option>
                 {DOCUMENT_FORMATS.map((f) => <option key={f}>{f}</option>)}
+                <option value={IMAGE_FORMAT}>画像（告知画像）</option>
               </select>
             </Label>
           </div>
 
           {isDocument && (
             <div class={`${card} p-6`}>
-              <h2 class="font-bold">雛形の Google ドキュメント</h2>
+              <h2 class="font-bold">雛形の {fileLabel}</h2>
               <ol class="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-slate-500">
-                <li>Word ファイルはドライブにアップロードし、「ファイル → Google ドキュメントとして保存」で変換する</li>
+                <li>
+                  {isSlides
+                    ? 'Google スライドで告知画像のデザインを作る（PowerPoint はドライブにアップロードして「Google スライドとして保存」）'
+                    : 'Word ファイルはドライブにアップロードし、「ファイル → Google ドキュメントとして保存」で変換する'}
+                </li>
                 <li>差し込みたい箇所に {'{{団体名}}'} のように書く（下の項目をクリックするとコピーできます）</li>
-                <li>ドキュメントの URL を貼り付けて「読み込む」</li>
+                {isSlides && <li>ロゴを入れたい位置に図形を置き、その中に {'{{ロゴ}}'} と書く（図形がロゴ画像に置き換わります）</li>}
+                <li>{isSlides ? 'スライド' : 'ドキュメント'}の URL を貼り付けて「読み込む」</li>
               </ol>
               <div class="mt-4 flex gap-2">
                 <input
                   value={meta.fileId}
                   onInput={(e) => {
-                    setMeta({ ...meta, fileId: docIdFrom(e.currentTarget.value) })
+                    setMeta({ ...meta, fileId: driveIdFrom(e.currentTarget.value) })
                     setFields({})
                   }}
-                  placeholder="https://docs.google.com/document/d/…"
+                  placeholder={isSlides ? "https://docs.google.com/presentation/d/…" : "https://docs.google.com/document/d/…"}
                   class={cx(inputCls, 'mt-0 font-mono')}
                 />
                 <Button variant="outline" icon={loadingDoc ? Spinner : FileText} onClick={loadDocument} disabled={!meta.fileId || loadingDoc}>読み込む</Button>
               </div>
               <div class="mt-3 flex flex-wrap items-center gap-3">
-                <DocLink fileId={meta.fileId} />
-                <p class="text-xs text-slate-400">雛形の文面や書式は Google ドキュメントで直します。直したら「読み込む」を押して保存すると、差し込み項目とプレビューに反映されます。</p>
+                <DocLink fileId={meta.fileId} kind={isSlides ? 'presentation' : 'document'} />
+                <p class="text-xs text-slate-400">雛形の文面や{isSlides ? 'デザイン' : '書式'}は {fileLabel} で直します。直したら「読み込む」を押して保存すると、差し込み項目とプレビューに反映されます。</p>
               </div>
             </div>
           )}
@@ -244,7 +249,7 @@ export function TemplateEditor({ mode, template, onClose }) {
               <div>
                 <h2 class="font-bold">項目を差し込む</h2>
                 <p class="mt-1 text-xs text-slate-500">
-                  {isDocument ? 'クリックで {{項目名}} をコピーします。雛形の Google ドキュメントに貼り付けてください。' : `クリックで「${activeDef?.label || '本文'}」のカーソル位置に挿入します。`}日付は書式を選べます。
+                  {isDocument ? `クリックで {{項目名}} をコピーします。雛形の ${fileLabel}に貼り付けてください。` : `クリックで「${activeDef?.label || '本文'}」のカーソル位置に挿入します。`}日付は書式を選べます。
                 </p>
               </div>
               {!isDocument && <Button variant="outline" size="sm" icon={Scissors} onClick={() => insert('\n---\n')} title="X のスレッドで次の投稿に分ける区切りを入れます">X区切り</Button>}
@@ -259,6 +264,11 @@ export function TemplateEditor({ mode, template, onClose }) {
                       {i.label || i.key}
                     </button>
                   ))}
+                  {cat === '団体' && isSlides && (
+                    <button onClick={() => insert(`{{${LOGO_KEY}}}`)} class={cx('inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium', usedKeys.includes(LOGO_KEY) ? 'border-[#9bdcc5] bg-[#effcf6] text-[#17634f]' : 'border-[#dce5f2] bg-white text-slate-600 hover:border-[#3b8dd9]')} title="図形の中に書くと、団体マスタのロゴ画像に置き換わります">
+                      ロゴ画像
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -277,7 +287,7 @@ export function TemplateEditor({ mode, template, onClose }) {
           <div class={`${card} space-y-5 p-6`}>
             {isDocument && (
               <div>
-                <span class="text-sm font-semibold">雛形の内容（読み込み結果）</span>
+                <span class="text-sm font-semibold">雛形の内容（読み込み結果{isSlides ? '。--- はスライドの区切り' : ''}）</span>
                 <div class="mt-2 max-h-[420px] min-h-24 overflow-auto rounded-xl border border-[#dce5f2] bg-[#f9fbfe] p-3 font-mono text-sm leading-6 whitespace-pre-wrap text-slate-600">
                   {fields['本文'] || '「読み込む」を押すと、雛形の本文がここに表示されます。'}
                 </div>

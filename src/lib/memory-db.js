@@ -88,3 +88,69 @@ export function createMockDocs(documents) {
     },
   }
 }
+
+function toBase64(text) {
+  const bytes = new TextEncoder().encode(text)
+  let binary = ''
+  for (const b of bytes) binary += String.fromCharCode(b)
+  return btoa(binary)
+}
+
+const escapeXml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+// gas/Main.gs の FilesAdapter の代わり。画像はメモリ上（store）に置く
+export function createMockFiles(store = {}) {
+  let seq = Object.keys(store).length
+  return {
+    store,
+    saveImage({ fileName, mimeType, base64 }) {
+      const id = `MOCK_IMAGE_${++seq}`
+      store[id] = { fileName, mimeType, base64 }
+      return id
+    },
+    readImage(fileId) {
+      const f = store[fileId]
+      if (!f) {
+        const e = new Error(`画像が見つかりません（ID：${fileId}）`)
+        e.appCode = 'IMAGE_NOT_FOUND'
+        throw e
+      }
+      return { mimeType: f.mimeType, base64: f.base64 }
+    },
+  }
+}
+
+// gas/Main.gs の SlidesAdapter の代わり。雛形は documents から読み、スライドごとに SVG 画像を返す（本番は PNG）
+export function createMockSlides(documents, files) {
+  const docs = createMockDocs(documents)
+  return {
+    readText: (fileId) => docs.readText(fileId),
+    render({ fileId, replacements, images, fileName }) {
+      const slides = docs.readText(fileId).split('\n---\n')
+      return {
+        docUrl: '',
+        images: slides.map((slide, i) => {
+          const parts = []
+          let y = 150
+          for (let line of slide.split('\n')) {
+            const imageToken = Object.keys(images).find((t) => line.includes(t))
+            if (imageToken) {
+              const id = images[imageToken]
+              if (id) {
+                const img = files.readImage(id)
+                parts.push(`<image href="data:${img.mimeType};base64,${img.base64}" x="540" y="${y - 60}" width="120" height="120" preserveAspectRatio="xMidYMid meet"/>`)
+                y += 110
+              }
+              continue
+            }
+            for (const [token, value] of Object.entries(replacements)) line = line.split(token).join(value)
+            parts.push(`<text x="600" y="${y}" font-size="${i === 0 && y < 300 ? 48 : 30}" fill="#fff" text-anchor="middle" font-family="sans-serif">${escapeXml(line)}</text>`)
+            y += 64
+          }
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675"><rect width="1200" height="675" fill="#102c56"/>${parts.join('')}<text x="1180" y="655" font-size="18" fill="#9fb6d6" text-anchor="end" font-family="sans-serif">モックモード：本番は PNG で出力されます</text></svg>`
+          return { fileName: `${fileName}${slides.length > 1 ? `_${i + 1}` : ''}.svg`, mimeType: 'image/svg+xml', base64: toBase64(svg) }
+        }),
+      }
+    },
+  }
+}

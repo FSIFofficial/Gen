@@ -2,9 +2,10 @@
 import schema from '../../gas/Schema.gs'
 import mockData from '../../gas/MockData.gs'
 import core from '../../gas/Core.gs'
-import { MemoryDb, createMockDocs, loadGasCore } from './memory-db.js'
+import { MemoryDb, createMockDocs, createMockFiles, createMockSlides, loadGasCore } from './memory-db.js'
 
 const STORAGE_KEY = 'pg-mock-db'
+const FILES_KEY = 'pg-mock-files'
 export const MOCK_ADMIN_PASSWORD = 'admin'
 
 export function createMockBackend() {
@@ -19,9 +20,19 @@ export function createMockBackend() {
   if (!db) db = new MemoryDb()
   gas.seedTables(db, new Date())
 
+  let fileStore = {}
+  try {
+    fileStore = JSON.parse(localStorage.getItem(FILES_KEY) || '{}')
+  } catch {
+    fileStore = {}
+  }
+  const files = createMockFiles(fileStore)
+
   const env = {
     db,
     docs: createMockDocs(gas.MOCK_DOCUMENTS),
+    slides: createMockSlides(gas.MOCK_DOCUMENTS, files),
+    files,
     props: { userKey: 'mock', adminPassword: MOCK_ADMIN_PASSWORD },
     withLock: (fn) => fn(),
     now: () => new Date(),
@@ -33,6 +44,7 @@ export function createMockBackend() {
     const res = gas.handleRequest(JSON.parse(JSON.stringify(body)), env)
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(db))
+      localStorage.setItem(FILES_KEY, JSON.stringify(fileStore))
     } catch {
       // 保存できなくてもメモリ上では動く
     }
@@ -43,6 +55,7 @@ export function createMockBackend() {
 export function resetMockData() {
   try {
     localStorage.removeItem(STORAGE_KEY)
+    localStorage.removeItem(FILES_KEY)
   } catch {
     // noop
   }

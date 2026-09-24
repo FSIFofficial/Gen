@@ -19,6 +19,16 @@ var MOCK_DOCUMENTS = {
     '甲：{{運営団体名}}',
     '乙：{{団体名}}　代表者：{{代表者名}}',
   ].join('\n'),
+  // Google スライドの雛形。スライドの区切りは ---（読み込み時にこの形になる）
+  SAMPLE_SLIDES: [
+    '{{ロゴ}}',
+    'パートナー締結のお知らせ',
+    '{{団体名}}',
+    '{{締結日:YYYY.MM.DD}}',
+    '---',
+    '{{団体名}}について',
+    '{{団体紹介}}',
+  ].join('\n'),
 };
 
 var MOCK_DATA = {
@@ -36,6 +46,7 @@ var MOCK_DATA = {
     { id: 'M004', name: 'note', order: 4, active: true },
     { id: 'M005', name: 'HPニュース', order: 5, active: true },
     { id: 'M006', name: '契約書', order: 6, active: true },
+    { id: 'M007', name: '告知画像', order: 7, active: true },
   ],
   mediaFields: [
     { mediaId: 'M001', fieldKey: '件名', label: '件名', limit: '', countMode: '通常', splitRule: 'なし', order: 1 },
@@ -48,6 +59,7 @@ var MOCK_DATA = {
     { mediaId: 'M005', fieldKey: 'タイトル', label: 'タイトル', limit: '', countMode: '通常', splitRule: 'なし', order: 1 },
     { mediaId: 'M005', fieldKey: '本文', label: '本文', limit: '', countMode: '通常', splitRule: 'なし', order: 2 },
     { mediaId: 'M006', fieldKey: '本文', label: '書類の内容', limit: '', countMode: '通常', splitRule: 'なし', order: 1 },
+    { mediaId: 'M007', fieldKey: '本文', label: 'スライドの内容', limit: '', countMode: '通常', splitRule: 'なし', order: 1 },
   ],
   dateFormats: [
     { label: '2026年9月24日', format: 'YYYY年M月D日', order: 1, active: true },
@@ -108,10 +120,12 @@ var MOCK_DATA = {
     { id: 'T006', name: '締結告知note（共通）', setId: 'S001', mediaId: 'M004', rank: '共通', format: 'テキスト', fileId: '', active: true },
     { id: 'T007', name: '締結告知HPニュース（共通）', setId: 'S001', mediaId: 'M005', rank: '共通', format: 'テキスト', fileId: '', active: true },
     { id: 'T008', name: 'サンプル連携契約書（共通）', setId: 'S001', mediaId: 'M006', rank: '共通', format: 'PDF', fileId: 'SAMPLE_CONTRACT', active: true },
+    { id: 'T009', name: '締結告知画像（共通）', setId: 'S001', mediaId: 'M007', rank: '共通', format: '画像', fileId: 'SAMPLE_SLIDES', active: true },
   ],
   // PDF / Docx のテンプレは、雛形ドキュメントの本文を「本文」欄に写しておく（フォーム生成とプレビュー用）
   templateFields: [
     { templateId: 'T008', fieldKey: '本文', content: MOCK_DOCUMENTS.SAMPLE_CONTRACT },
+    { templateId: 'T009', fieldKey: '本文', content: MOCK_DOCUMENTS.SAMPLE_SLIDES },
     { templateId: 'T001', fieldKey: '件名', content: '【パートナー締結のお知らせ】{{団体名}}様' },
     { templateId: 'T001', fieldKey: '本文', content: [
       '{{団体名}}',

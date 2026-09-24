@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  countX, documentReplacements, renderDocumentText, countPlain, extractKeys, extractPlaceholders, formatDate, formItemsFor, generateOutputs, buildContext,
+  countX, documentReplacements, driveIdFrom, fileReplacements, renderDocumentText, countPlain, extractKeys, extractPlaceholders, formatDate, formItemsFor, generateOutputs, buildContext,
   pickTemplates, placeholderAt, renderSegments, renderTemplate, splitBySeparator, splitXThread,
 } from '../src/lib/engine.js'
 
@@ -119,4 +119,16 @@ test('書類：行を消さずに差し込み、差し込み表を作る', () =>
   const tpl = '甲：{{署名}}\n乙：{{団体名}}\n締結日：{{締結日:M/D(曜)}}'
   assert.equal(renderDocumentText(tpl, ctx({ 締結日: '2026-09-24' })), '甲：サンプル運営事務局\n乙：\n締結日：9/24(木)')
   assert.deepEqual(documentReplacements(tpl, ctx({ 締結日: '2026-09-24' })), { '{{署名}}': 'サンプル運営事務局', '{{団体名}}': '', '{{締結日:M/D(曜)}}': '9/24(木)' })
+})
+
+test('雛形ファイル：画像の差し込みを分け、ドライブの URL から ID を取り出す', () => {
+  assert.equal(driveIdFrom('https://docs.google.com/presentation/d/1AbCdEfGhIjK_lm-no/edit#slide=id.p'), '1AbCdEfGhIjK_lm-no')
+  assert.equal(driveIdFrom('https://drive.google.com/open?id=1AbCdEfGhIjKlmno'), '1AbCdEfGhIjKlmno')
+  assert.equal(driveIdFrom(' RAWID '), 'RAWID')
+  const imgItems = [...items, { key: '写真', category: '案件', type: '画像' }]
+  const c = buildContext({ values: { 団体名: 'A', 写真: 'https://drive.google.com/file/d/1PhotoIdPhoto/view' }, items: imgItems, settings })
+  const tpl = '{{ロゴ}}{{団体名}}{{写真}}'
+  assert.deepEqual(fileReplacements(tpl, c, { logoFileId: 'L', withImages: true }), { replacements: { '{{団体名}}': 'A' }, images: { '{{ロゴ}}': 'L', '{{写真}}': '1PhotoIdPhoto' } })
+  // 書類では画像の差し込みは空欄にする
+  assert.deepEqual(documentReplacements(tpl, c), { '{{ロゴ}}': '', '{{団体名}}': 'A', '{{写真}}': '' })
 })

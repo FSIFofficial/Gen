@@ -1,6 +1,6 @@
 import { createContext } from 'preact'
-import { useContext, useEffect, useRef } from 'preact/hooks'
-import { ExternalLink, X } from 'lucide-preact'
+import { useContext, useEffect, useRef, useState } from 'preact/hooks'
+import { ExternalLink, ImagePlus, X } from 'lucide-preact'
 
 export const AppContext = createContext(null)
 export const useApp = () => useContext(AppContext)
@@ -168,21 +168,94 @@ export function downloadBase64({ base64, mimeType, fileName }) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-export const googleDocUrl = (fileId) => `https://docs.google.com/document/d/${encodeURIComponent(fileId)}/edit`
+export const googleDocUrl = (fileId, kind = 'document') => `https://docs.google.com/${kind}/d/${encodeURIComponent(fileId)}/edit`
 
-// 書類テンプレの雛形（Google ドキュメント）を新しいタブで開く。モックモードの雛形は実在しないので出さない
-export function DocLink({ fileId, size = 'md', children = 'Googleドキュメントで開く' }) {
+// 雛形（Google ドキュメント / スライド）を新しいタブで開く。モックモードの雛形は実在しないので出さない
+export function DocLink({ fileId, kind = 'document', size = 'md', children }) {
   const { api } = useApp()
   if (!fileId || api.mock) return null
   return (
     <a
-      href={googleDocUrl(fileId)}
+      href={googleDocUrl(fileId, kind)}
       target="_blank"
       rel="noopener noreferrer"
       class={cx('inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl font-medium whitespace-nowrap transition', variants[size === 'sm' ? 'ghost' : 'outline'], sizes[size])}
     >
       <ExternalLink class="size-4" />
-      {children}
+      {children || (kind === 'presentation' ? 'Googleスライドで開く' : 'Googleドキュメントで開く')}
     </a>
+  )
+}
+
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif']
+const imageCache = new Map()
+
+// 保存済みの画像（ロゴなど）を GAS から読み出して表示する
+export function StoredImage({ fileId, class: klass }) {
+  const { api } = useApp()
+  const [src, setSrc] = useState(imageCache.get(fileId) || '')
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    if (!fileId || imageCache.has(fileId)) return setSrc(imageCache.get(fileId) || '')
+    let alive = true
+    setFailed(false)
+    api
+      .call('readImage', { fileId })
+      .then(({ mimeType, base64 }) => {
+        const url = `data:${mimeType};base64,${base64}`
+        imageCache.set(fileId, url)
+        if (alive) setSrc(url)
+      })
+      .catch(() => alive && setFailed(true))
+    return () => {
+      alive = false
+    }
+  }, [fileId])
+  if (!fileId) return null
+  if (failed) return <span class="text-xs text-red-600">画像を読み込めません</span>
+  if (!src) return <Spinner class="text-slate-300" />
+  return <img src={src} alt="" class={cx('rounded-lg border border-[#e7edf5] bg-white object-contain', klass || 'size-16')} />
+}
+
+// 画像を選んで GAS（LOGO_FOLDER_ID のフォルダ）に保存し、ファイルIDを返す
+export function ImageUpload({ value, onChange, disabled }) {
+  const { api, notify } = useApp()
+  const [busy, setBusy] = useState(false)
+  const pick = async (e) => {
+    const file = e.currentTarget.files?.[0]
+    e.currentTarget.value = ''
+    if (!file) return
+    if (!IMAGE_TYPES.includes(file.type)) return notify('PNG・JPEG・GIF の画像を選んでください', 'error')
+    if (file.size > 5 * 1024 * 1024) return notify('画像は5MB以下にしてください', 'error')
+    setBusy(true)
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result).split(',')[1])
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+      const { fileId } = await api.call('uploadImage', { fileName: file.name, mimeType: file.type, base64 })
+      imageCache.set(fileId, `data:${file.type};base64,${base64}`)
+      onChange(fileId)
+      notify('画像を保存しました')
+    } catch (err) {
+      notify(err.message, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div class="mt-1 flex items-center gap-3">
+      <StoredImage fileId={value} />
+      <label class={cx('inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-xl border border-[#dce5f2] bg-white px-3 text-xs font-medium hover:bg-slate-50', (disabled || busy) && 'pointer-events-none opacity-50')}>
+        {busy ? <Spinner /> : <ImagePlus class="size-4" />}
+        {value ? '画像を変更' : '画像を選ぶ'}
+        <input type="file" accept={IMAGE_TYPES.join(',')} class="sr-only" onChange={pick} disabled={disabled || busy} />
+      </label>
+      {value && !disabled && (
+        <button type="button" class="text-xs text-slate-400 hover:text-red-600" onClick={() => onChange('')}>外す</button>
+      )}
+    </div>
   )
 }

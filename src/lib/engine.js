@@ -8,6 +8,20 @@ export const X_URL_WEIGHT = 23
 export const DOCUMENT_FORMATS = ['PDF', 'Docx']
 
 export const isDocumentTemplate = (t) => DOCUMENT_FORMATS.includes(t?.format)
+// Google スライドの雛形に差し込んで PNG で書き出す出力形式
+export const IMAGE_FORMAT = '画像'
+export const isImageTemplate = (t) => t?.format === IMAGE_FORMAT
+// 雛形ファイル（ドキュメント / スライド）から作るテンプレ
+export const isFileTemplate = (t) => isDocumentTemplate(t) || isImageTemplate(t)
+// 告知画像で、図形を団体マスタのロゴ画像に置き換える差し込み。入力項目ではなく組み込み
+export const LOGO_KEY = 'ロゴ'
+
+// Google ドライブの URL でも ID でも受け付けて ID を返す
+export function driveIdFrom(input) {
+  const s = String(input || '').trim()
+  const m = /\/d\/([a-zA-Z0-9_-]{10,})/.exec(s) || /[?&]id=([a-zA-Z0-9_-]{10,})/.exec(s)
+  return m ? m[1] : s
+}
 
 // {{項目名}} または {{項目名:書式}}
 const PLACEHOLDER_RE = /\{\{\s*([^{}:]+?)\s*(?::\s*([^{}]*?)\s*)?\}\}/g
@@ -101,9 +115,26 @@ export function renderDocumentText(template, ctx) {
 
 // 書類の差し込み表：{ '{{団体名}}': 'サンプル団体', '{{締結日:M/D}}': '9/24', ... }（未入力は空文字）
 export function documentReplacements(template, ctx) {
-  const out = {}
-  for (const p of extractPlaceholders(template)) out[p.raw] = resolveValue(p.key, p.format, ctx) ?? ''
-  return out
+  return fileReplacements(template, ctx).replacements
+}
+
+// 画像を入れる差し込みか（{{ロゴ}} と、入力タイプ「画像」の項目）
+const isImageToken = (key, ctx) => key === LOGO_KEY || ctx.items?.[key]?.type === '画像'
+
+// 雛形ファイル用の差し込み表。images は告知画像で図形を置き換える画像のファイルID（書類では空欄にする）
+export function fileReplacements(template, ctx, { logoFileId = '', withImages = false } = {}) {
+  const replacements = {}
+  const images = {}
+  for (const p of extractPlaceholders(template)) {
+    if (isImageToken(p.key, ctx)) {
+      const id = p.key === LOGO_KEY ? logoFileId : driveIdFrom(ctx.values?.[p.key])
+      if (withImages) images[p.raw] = id || ''
+      else replacements[p.raw] = ''
+      continue
+    }
+    replacements[p.raw] = resolveValue(p.key, p.format, ctx) ?? ''
+  }
+  return { replacements, images }
 }
 
 export function tidy(text) {
@@ -237,7 +268,7 @@ export function generateOutputs({ picked, mediaIds, media, ctx }) {
     if (!t || !m) continue
     const fields = {}
     const keys = m.fields.length ? m.fields.map((f) => f.fieldKey) : Object.keys(t.fields)
-    const render = isDocumentTemplate(t) ? renderDocumentText : renderTemplate
+    const render = isFileTemplate(t) ? renderDocumentText : renderTemplate
     for (const key of keys) fields[key] = render(t.fields[key] ?? '', ctx)
     out[mediaId] = { templateId: t.id, fields }
   }
@@ -255,7 +286,8 @@ export function formItemsFor({ picked, mediaIds, items, settings }) {
     orgItems: used.filter((i) => i.category === '団体'),
     caseItems: used.filter((i) => i.category !== '団体'),
     settingKeys: keys.filter((k) => !byKey[k] && settingKeys.has(k)),
-    unknownKeys: keys.filter((k) => !byKey[k] && !settingKeys.has(k)),
+    unknownKeys: keys.filter((k) => !byKey[k] && !settingKeys.has(k) && k !== LOGO_KEY),
+    usesLogo: keys.includes(LOGO_KEY),
   }
 }
 
@@ -263,7 +295,10 @@ export function formItemsFor({ picked, mediaIds, items, settings }) {
 export function mockValues(items) {
   const today = new Date()
   const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-  return Object.fromEntries(
-    items.map((i) => [i.key, i.example || i.defaultValue || (i.type === '日付' ? iso : i.type === '数値' ? '1' : i.type === 'URL' ? 'https://example.com' : `（${i.label || i.key}）`)]),
-  )
+  return {
+    ...Object.fromEntries(
+      items.map((i) => [i.key, i.example || i.defaultValue || (i.type === '日付' ? iso : i.type === '数値' ? '1' : i.type === 'URL' ? 'https://example.com' : `（${i.label || i.key}）`)]),
+    ),
+    [LOGO_KEY]: '［ロゴ画像］',
+  }
 }

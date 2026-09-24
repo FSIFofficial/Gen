@@ -1,0 +1,329 @@
+// 使い方（ヘッダーの「使い方」）と追加方法（管理画面の「追加方法」タブ）の説明ページ。
+// 画面の文言を変えたら、ここの説明も合わせて直す
+import { Eyebrow, card, cx } from '../ui/ui.jsx'
+
+function Toc({ sections }) {
+  return (
+    <nav class="flex flex-wrap gap-2 text-sm">
+      {sections.map(([id, title]) => (
+        <a key={id} href={`#${id}`} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }} class="rounded-full border border-[#dce5f2] bg-white px-3 py-1.5 font-medium text-slate-600 hover:border-[#3b8dd9] hover:text-[#1261af]">
+          {title}
+        </a>
+      ))}
+    </nav>
+  )
+}
+
+function Section({ id, title, lead, children }) {
+  return (
+    <section id={id} class={cx(card, 'scroll-mt-6 p-6 md:p-8')}>
+      <h2 class="text-xl font-bold">{title}</h2>
+      {lead && <p class="mt-2 text-sm leading-6 text-slate-500">{lead}</p>}
+      <div class="mt-5 space-y-5 text-sm leading-7 text-slate-700">{children}</div>
+    </section>
+  )
+}
+
+function Steps({ children }) {
+  return <ol class="space-y-3">{children}</ol>
+}
+
+function Step({ n, title, children }) {
+  return (
+    <li class="flex gap-3">
+      <span class="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#1261af] text-xs font-bold text-white">{n}</span>
+      <div class="min-w-0 pt-0.5">
+        {title && <p class="font-bold text-[#12233f]">{title}</p>}
+        <div class="text-slate-600">{children}</div>
+      </div>
+    </li>
+  )
+}
+
+function Tip({ tone = 'blue', title, children }) {
+  const tones = {
+    blue: 'border-[#cfe3f7] bg-[#f1f8ff] text-[#1a4f86]',
+    amber: 'border-amber-200 bg-amber-50 text-amber-900',
+    green: 'border-[#b7e8d7] bg-[#effcf6] text-[#17634f]',
+  }
+  return (
+    <div class={cx('rounded-xl border px-4 py-3 text-sm leading-6', tones[tone])}>
+      {title && <p class="font-bold">{title}</p>}
+      {children}
+    </div>
+  )
+}
+
+// 画面上のボタン名など
+const K = ({ children }) => <span class="rounded bg-[#eef2f8] px-1.5 py-0.5 text-[13px] font-semibold text-[#12233f]">{children}</span>
+// 差し込みの記法
+const C = ({ children }) => <code class="rounded bg-[#102c56]/5 px-1.5 py-0.5 font-mono text-[13px] text-[#08745a]">{children}</code>
+
+function Table({ head, rows }) {
+  return (
+    <div class="overflow-x-auto rounded-xl border border-[#edf1f7]">
+      <table class="w-full text-sm">
+        <thead class="bg-[#f6f8fc]">
+          <tr class="text-left text-xs text-slate-500">{head.map((h) => <th key={h} class="px-4 py-2 font-semibold whitespace-nowrap">{h}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} class="border-t border-[#f1f4f9] align-top">
+              {r.map((c, j) => <td key={j} class="px-4 py-2">{c}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ---------- 使い方 ----------
+
+const USAGE_SECTIONS = [
+  ['flow', '全体の流れ'],
+  ['create', '資料を作る'],
+  ['output', '出力・コピー'],
+  ['files', '書類・告知画像'],
+  ['history', '履歴'],
+  ['admin', '管理画面'],
+  ['trouble', '困ったとき'],
+]
+
+export function Usage() {
+  return (
+    <section class="mx-auto max-w-4xl">
+      <Eyebrow>GUIDE / HOW TO USE</Eyebrow>
+      <h1 class="mt-2 text-3xl font-bold">使い方</h1>
+      <p class="mt-2 text-sm text-slate-500">パートナー締結時の発信物（メール・SNS・HPニュース・契約書・告知画像）を、団体ごとに変わる部分だけ入力してまとめて作るツールです。</p>
+      <div class="mt-6"><Toc sections={USAGE_SECTIONS} /></div>
+
+      <div class="mt-8 space-y-6">
+        <Section id="flow" title="全体の流れ">
+          <div class="grid gap-3 sm:grid-cols-4">
+            {[['1', '団体を選ぶ', '登録済みから検索。なければその場で追加'], ['2', 'セット・ランク', '例：締結告知セット × ゴールド'], ['3', '案件情報を入力', '右側のプレビューで確認しながら'], ['4', '出力', '媒体ごとにコピー・ダウンロード']].map(([n, t, d]) => (
+              <div key={n} class="rounded-xl bg-[#f6f8fc] p-4">
+                <p class="text-xs font-bold text-[#1261af]">STEP {n}</p>
+                <p class="mt-1 font-bold">{t}</p>
+                <p class="mt-1 text-xs leading-5 text-slate-500">{d}</p>
+              </div>
+            ))}
+          </div>
+          <p>ヘッダーの <K>新規作成</K> かホームの <K>新しい発信物を作成</K> から始めます。ホームのセットのカードから始めると、そのセットが選ばれた状態になります。</p>
+        </Section>
+
+        <Section id="create" title="資料を作る">
+          <Steps>
+            <Step n="1" title="団体を選ぶ">
+              団体名などで検索して選びます。初めての団体は <K>新規団体を追加</K> から登録できます（誰でも追加できます。ロゴ画像もここで登録できます）。登録済みの団体の情報を直すのは管理者だけです。
+            </Step>
+            <Step n="2" title="セットとランクを選ぶ">
+              セット（例：締結告知セット）とランクを選ぶと、作れる媒体がチェック付きで並びます。今回いらない媒体はチェックを外します。媒体ごとに「そのランク専用」のテンプレートがあればそれを、なければ「共通」を使います。
+            </Step>
+            <Step n="3" title="案件情報を入力する">
+              選んだテンプレートで使う項目だけが表示されます。団体情報は団体マスタから自動で入ります。ここで直した内容は今回の資料だけに反映されます（管理者は「団体マスタにも反映する」を選べます）。
+              <br />
+              右側のプレビューでは、入力した値が<span class="font-bold text-[#08745a] underline decoration-[#42c99e] decoration-2 underline-offset-4">緑</span>、未入力が<mark class="rounded bg-amber-100 px-0.5 text-amber-800">黄色</mark>で表示されます。未入力の項目は空で出力され、差し込みがすべて空の行は見出しごと消えます。
+            </Step>
+            <Step n="4" title="文面を生成する">
+              <K>文面を生成</K> を押すと出力画面に進み、自動で履歴に保存されます。
+            </Step>
+          </Steps>
+          <Tip title="作成者名">最初に一度だけ入力します。このブラウザに記憶され、履歴と操作ログに残ります（本人確認ではなく記録用です）。</Tip>
+          <Tip tone="green" title="入力途中は自動で保存されます">
+            途中で画面を閉じても、次に <K>新規作成</K> を開くと「入力途中の資料があります」と表示され、<K>続きから</K> で再開できます。いらなければ <K>破棄する</K>。保存はこのブラウザだけで、文面を生成すると消えます。
+          </Tip>
+        </Section>
+
+        <Section id="output" title="出力・コピー">
+          <ul class="list-disc space-y-2 pl-5">
+            <li>媒体ごとのタブに分かれています。件名・本文・ハッシュタグなど欄ごとの <K>コピー</K> と、媒体全体の <K>すべてコピー</K> があります。</li>
+            <li>X は投稿ごとに分割され、投稿ごとに文字数（全角2・半角1・URLは23で計算、上限280）と <K>コピー</K> が出ます。<K>(1/3) 形式の番号を付ける</K> で番号を付けられます。</li>
+            <li>文面は画面上で直接直せます（テンプレートには影響しません）。直したら <K>修正を保存</K> で履歴を上書きします。</li>
+            <li><K>印刷・PDF保存</K> で全媒体をまとめて印刷・PDF にできます。</li>
+          </ul>
+          <Tip tone="amber">公開前に団体名・日付・公開範囲を必ず確認してください。</Tip>
+        </Section>
+
+        <Section id="files" title="書類（契約書・申込書）と告知画像">
+          <p><span class="font-bold">書類</span>：出力画面の書類のタブで <K>PDFで出力</K> / <K>Docxで出力</K> を押すと、Google ドキュメントの雛形に入力内容を差し込んだファイルがダウンロードされます。画面に出る内容は確認用で、ここでは編集できません。細かな修正は出力したファイルで行ってください。</p>
+          <p><span class="font-bold">告知画像</span>：告知画像のタブで <K>画像を作成</K> を押すと、Google スライドの雛形に入力内容と団体のロゴを差し込み、スライドごとの画像（PNG）ができます。確認して <K>ダウンロード</K> / <K>すべてダウンロード</K>。入力を直したら <K>作り直す</K>。</p>
+          <Tip>書類・告知画像は作成に数秒〜十数秒かかります。ロゴが未登録の団体は、ロゴの位置が空になります（管理画面の団体マスタで登録できます）。</Tip>
+        </Section>
+
+        <Section id="history" title="履歴">
+          <ul class="list-disc space-y-2 pl-5">
+            <li>作った資料は自動で保存され、ヘッダーの <K>履歴</K> から団体名・セット・作成者などで検索できます。</li>
+            <li><K>開く</K> で当時の出力画面を再表示します。</li>
+            <li><K>これを元に作り直す</K> で入力値を引き継いで案件情報の入力から始めます（新しい履歴として保存されます）。</li>
+            <li>履歴の削除は管理者だけです。</li>
+          </ul>
+        </Section>
+
+        <Section id="admin" title="管理画面">
+          <p>テンプレート・セット・媒体・入力項目・ランク・日付書式・団体マスタ・共通設定を管理します。ルールは <span class="font-bold">「追加は誰でも、既存の変更・無効化は管理者」</span>です。</p>
+          <Table
+            head={['操作', '利用者', '管理者']}
+            rows={[
+              ['一覧を見る・新規追加・団体の一括登録', '○', '○'],
+              ['既存データの編集・無効化', '×', '○'],
+              ['履歴の削除', '×', '○'],
+            ]}
+          />
+          <ul class="list-disc space-y-2 pl-5">
+            <li><K>編集</K> や <K>無効化</K> を押すと管理者パスワードを聞かれます。一度入力すると、タブを閉じるまで再入力は不要です。ヘッダーの <K>管理者モード</K> を押すと終了します。</li>
+            <li>削除の代わりに「無効化」します。過去の履歴は壊れず、<K>有効にする</K> で戻せます。</li>
+            <li>テンプレートや項目の追加手順は、管理画面の <K>追加方法</K> タブにまとめています。</li>
+            <li>右上の <K>操作者名</K> は <K>操作ログ</K> タブに記録されます。誰がいつ何を変えたかを確認できます。</li>
+          </ul>
+        </Section>
+
+        <Section id="trouble" title="困ったとき">
+          <Table
+            head={['症状', '対処']}
+            rows={[
+              ['スプレッドシートで直した内容が出てこない', <>ヘッダーの <K>最新に更新</K> を押します（ページを移動したときや、別のタブから戻ったときも自動で更新されます）。</>],
+              ['「GAS に正しく届きませんでした」と出る', 'Google に複数のアカウントでログインしていると起きることがあります。シークレットウィンドウか、使うアカウントだけでログインしたブラウザで開き直してください。'],
+              ['最初の読み込みが遅い', 'しばらく使われていないと、最初だけ数秒かかります。そのまま待ってください。'],
+              ['「管理者パスワードが正しくない」と出る', '管理者に確認してください。パスワードはこのタブを閉じると消えます。'],
+              ['書類・画像の出力でエラーになる', '雛形のドキュメント／スライドが削除・移動されていないか管理者に確認してください。'],
+            ]}
+          />
+        </Section>
+      </div>
+    </section>
+  )
+}
+
+// ---------- 追加方法（管理画面のタブ） ----------
+
+const ADD_SECTIONS = [
+  ['add-text', 'テキストのテンプレート'],
+  ['add-syntax', '差し込みの書き方'],
+  ['add-doc', '書類（ドキュメント）'],
+  ['add-slides', '告知画像（スライド）'],
+  ['add-items', '項目・セット・媒体・ランク'],
+  ['add-orgs', '団体'],
+]
+
+export function AddGuide() {
+  return (
+    <div class="space-y-6">
+      <div class={cx(card, 'p-6')}>
+        <h2 class="text-xl font-bold">追加方法</h2>
+        <p class="mt-2 text-sm leading-6 text-slate-500">新しいテンプレート・書類・告知画像・項目・団体の追加手順です。追加は誰でもできます。追加したものを後から直す・無効化するのは管理者です。</p>
+        <div class="mt-4"><Toc sections={ADD_SECTIONS} /></div>
+      </div>
+
+      <Section id="add-text" title="テキストのテンプレート（メール・X・Instagram・note・HP など）">
+        <Steps>
+          <Step n="1">管理画面の <K>テンプレート</K> タブ → <K>新規追加</K>。似たテンプレートがあれば <K>複製</K> から始めると早いです。</Step>
+          <Step n="2">テンプレ名・セット・媒体・ランクを選び、出力形式は <K>テキスト</K>。セット・媒体・ランクが無ければ、選択肢の「＋ 新しく作る…」からその場で追加できます。</Step>
+          <Step n="3">本文を書きます。<K>項目を差し込む</K> の項目をクリックすると、カーソル位置に <C>{'{{団体名}}'}</C> のように入ります。日付の項目はクリックすると書式を選べます。</Step>
+          <Step n="4">X のスレッドを分けたい位置で <K>X区切り</K> を押します（<C>---</C> だけの行が入ります）。</Step>
+          <Step n="5">右のプレビューで確認します。<K>差し込むデータ</K> で「入力例」のほか、実際の団体や過去の履歴の値でも確認できます。</Step>
+          <Step n="6"><K>保存</K>。未登録の項目名を書いていると「新しい項目として登録しますか？」と聞かれるので、表示名や入力タイプを決めて登録します。</Step>
+        </Steps>
+        <Tip title="ランク専用と共通">ランクを「共通」にすると、そのランク専用のテンプレートが無いときに使われます。ゴールドだけ文面を変えたいなら、共通のほかに「ゴールド」のテンプレートを作ります。</Tip>
+      </Section>
+
+      <Section id="add-syntax" title="差し込みの書き方">
+        <Table
+          head={['書き方', '意味', '出力の例']}
+          rows={[
+            [<C>{'{{団体名}}'}</C>, '入力項目・団体情報を差し込む', 'サンプル団体'],
+            [<C>{'{{署名}}'}</C>, '共通設定の値を差し込む', 'サンプル運営事務局'],
+            [<C>{'{{締結日}}'}</C>, '日付（項目の標準の書式）', '2026年9月24日'],
+            [<C>{'{{締結日:M/D(曜)}}'}</C>, '日付（書式を指定）', '9/24(木)'],
+            [<C>---</C>, '（1行にこれだけ）X の次の投稿に分ける', '—'],
+            [<C>{'{{ロゴ}}'}</C>, '告知画像だけ：団体のロゴ画像に置き換える', '（画像）'],
+          ]}
+        />
+        <ul class="list-disc space-y-2 pl-5">
+          <li>日付の書式：<C>YYYY</C>＝年、<C>M</C>／<C>MM</C>＝月、<C>D</C>／<C>DD</C>＝日、<C>曜</C>＝曜日。候補は <K>日付書式</K> タブで追加できます。</li>
+          <li>未入力の項目は空で出力されます。差し込みがすべて空の行は、「今回のポイント：」のような見出しごと消えます（テキストのみ。書類・画像では行は消えません）。</li>
+          <li>条件分岐の書き方はありません。ランクで文面を変えたいときはランク専用のテンプレートを作ります。</li>
+        </ul>
+      </Section>
+
+      <Section id="add-doc" title="書類（契約書・申込書）を Google ドキュメントで追加する" lead="雛形の Google ドキュメントに差し込み、PDF か Docx で書き出します。書式・表・ロゴなどは雛形のまま出力されます。">
+        <Steps>
+          <Step n="1" title="雛形を用意する">
+            Word ファイルなら Google ドライブにアップロードして開き、<K>ファイル</K> → <K>Google ドキュメントとして保存</K> で変換します。はじめから Google ドキュメントで作っても構いません。
+          </Step>
+          <Step n="2" title="差し込み箇所を書く">
+            差し込みたい箇所に <C>{'{{団体名}}'}</C> <C>{'{{締結日}}'}</C> のように書きます。ヘッダー・フッターにも書けます。テンプレート編集画面の項目をクリックするとコピーできるので、ドキュメントに貼り付けてください。
+          </Step>
+          <Step n="3" title="テンプレートを追加する">
+            <K>テンプレート</K> → <K>新規追加</K> で、媒体（例：契約書）を選び、出力形式を <K>PDF</K> か <K>Docx</K> にします。ドキュメントの URL を貼り付けて <K>読み込む</K> → 雛形の文面が表示されたら <K>追加</K>。
+          </Step>
+          <Step n="4" title="確認する">
+            資料作成で書類の媒体を選ぶと、雛形で使っている項目が入力欄に出ます。出力画面で <K>PDFで出力</K> / <K>Docxで出力</K>。
+          </Step>
+        </Steps>
+        <Tip tone="amber" title="雛形を直したとき">
+          文面の変更は Google ドキュメントで行います（一覧や編集画面の <K>Googleドキュメントで開く</K> から開けます）。直したら編集画面で <K>読み込む</K> → <K>保存</K> を押してください（管理者）。押さないと、新しく足した項目が入力欄に出ません。
+        </Tip>
+        <Tip title="知っておくこと">
+          <ul class="list-disc pl-5">
+            <li>雛形のドキュメントは、GAS を動かしているアカウントが開ける場所（共有ドライブや管理用フォルダ）に置いてください。</li>
+            <li>未入力の項目は空欄のまま出力されます（行は消えません）。入力値の改行は、ドキュメント内の改行になります。</li>
+            <li>1回の出力でドキュメントを1件コピーして作ります。Google の作成上限（無料アカウントで1日250件程度）にご注意ください。</li>
+          </ul>
+        </Tip>
+      </Section>
+
+      <Section id="add-slides" title="告知画像を Google スライドで追加する" lead="雛形の Google スライドに文字と団体のロゴを差し込み、スライドごとに PNG 画像にします。">
+        <Steps>
+          <Step n="1" title="デザインを作る">
+            Google スライドで告知画像のデザインを作ります。PowerPoint ならドライブにアップロードして <K>Google スライドとして保存</K>。スライドのサイズがそのまま画像のサイズ（縦横比）になります。1スライド＝1枚の画像です。
+          </Step>
+          <Step n="2" title="文字の差し込み箇所を書く">
+            テキストボックスや図形、表の中に <C>{'{{団体名}}'}</C> <C>{'{{締結日:YYYY.MM.DD}}'}</C> のように書きます。文字の色・大きさ・フォントは、差し込んだ後もその箇所の書式のままです。
+          </Step>
+          <Step n="3" title="ロゴの位置を決める">
+            ロゴを入れたい位置に図形（四角など）を置き、その中に <C>{'{{ロゴ}}'}</C> とだけ書きます。出力するとその図形が団体のロゴ画像に置き換わります（図形の大きさに収まります）。ロゴが未登録の団体では、図形の文字が消えるだけです。
+          </Step>
+          <Step n="4" title="テンプレートを追加する">
+            <K>テンプレート</K> → <K>新規追加</K> で媒体（例：告知画像）を選び、出力形式を <K>画像</K> にします。スライドの URL を貼り付けて <K>読み込む</K> → <K>追加</K>。
+          </Step>
+          <Step n="5" title="ロゴを登録する">
+            団体のロゴは、団体の新規追加フォームか、<K>団体マスタ</K> の <K>編集</K>（管理者）でアップロードします（PNG・JPEG・GIF、5MBまで）。
+          </Step>
+        </Steps>
+        <Tip tone="amber" title="雛形を直したとき">
+          デザインや文言は Google スライドで直します（<K>Googleスライドで開く</K>）。差し込み項目を足したり消したりしたら、編集画面で <K>読み込む</K> → <K>保存</K>（管理者）。
+        </Tip>
+        <Tip title="知っておくこと">
+          <ul class="list-disc pl-5">
+            <li>ロゴ以外の画像を差し込みたいときは、入力タイプ「画像」の項目を作り、同じように図形の中に <C>{'{{項目名}}'}</C> と書きます。</li>
+            <li>差し込める画像は、ロゴの保存用フォルダに入っている画像だけです（ほかのドライブのファイルは使えません）。</li>
+            <li>雛形のスライドは、GAS を動かしているアカウントが開ける場所に置いてください。</li>
+          </ul>
+        </Tip>
+      </Section>
+
+      <Section id="add-items" title="入力項目・セット・媒体・ランク・日付書式・共通設定">
+        <Table
+          head={['追加するもの', '場所', 'ポイント']}
+          rows={[
+            [<K>入力項目</K>, '入力項目タブ → 新規追加', <>項目キーがテンプレートの <C>{'{{項目キー}}'}</C> になります（登録後は変更不可）。区分を「団体」にすると団体マスタに列が増え、団体ごとに保存されます。「案件」は毎回入力します。入力例はプレビューに使われます。</>],
+            [<K>セット</K>, 'セットタブ／テンプレート編集の「＋ 新しく作る…」', '発信の場面ごとのまとまり（例：締結告知セット）。'],
+            [<K>媒体</K>, '媒体タブ／テンプレート編集の「＋ 新しく作る…」', '欄（件名・本文など）の構成を決めます。X は数え方「X方式」・分割ルール「スレッド分割」にします。'],
+            [<K>ランク</K>, 'ランクタブ／テンプレート編集の「＋ 新しく作る…」', '「共通」は使えません。登録後は名前を変えられません。'],
+            [<K>日付書式</K>, '日付書式タブ', '例：M/D(曜)。テンプレートで日付を選ぶときの候補になります。'],
+            [<K>共通設定</K>, '共通設定タブ', <>署名など、どの資料でも同じ値。<C>{'{{項目キー}}'}</C> で差し込めます。</>],
+          ]}
+        />
+      </Section>
+
+      <Section id="add-orgs" title="団体">
+        <ul class="list-disc space-y-2 pl-5">
+          <li><span class="font-bold">1件ずつ</span>：資料作成の <K>新規団体を追加</K>、または <K>団体マスタ</K> → <K>新規追加</K>。</li>
+          <li><span class="font-bold">まとめて</span>：<K>団体マスタ</K> → <K>一括登録</K>。スプレッドシートの表を見出し行ごとコピーして貼り付けるか、CSV ファイルを選びます。1行目の見出しは団体マスタの列名（団体名・団体区分 など）に合わせます。「団体名」の列は必須です。</li>
+          <li>団体名が空の行、すでに登録済みの団体、同じ一覧の中で重複する団体名は登録されません（登録前の一覧で確認できます）。1回500件まで。ロゴは登録後に1件ずつ設定します。</li>
+        </ul>
+      </Section>
+    </div>
+  )
+}

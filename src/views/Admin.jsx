@@ -4,6 +4,7 @@ import { mapOrgColumns, orgRowsFromTable, parseDelimited } from '../lib/csv.js'
 import { COMMON_RANK, formatDate, isFileTemplate, isImageTemplate } from '../lib/engine.js'
 import { readAuthor, saveAuthor } from '../lib/storage.js'
 import { Alert, Badge, Button, DocLink, Empty, ImageUpload, Eyebrow, ItemInput, Label, Modal, Spinner, card, cx, formatDateTime, inputCls, textareaCls, useApp } from '../ui/ui.jsx'
+import { AddGuide } from './Guide.jsx'
 import { TemplateEditor } from './TemplateEditor.jsx'
 
 const ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画像']
@@ -64,6 +65,7 @@ const ENTITIES = [
       { prop: 'description', label: '説明' },
     ],
   },
+  { id: 'guide', label: '追加方法' },
   { id: 'logs', label: '操作ログ' },
 ]
 
@@ -79,6 +81,7 @@ export function Admin() {
     tab === 'templates' ? <TemplateList onOpen={setEditor} />
       : tab === 'orgs' ? <EntityTab key="orgs" def={orgDef(data)} headerExtra={<BulkOrgButton />} />
         : tab === 'logs' ? <LogList />
+          : tab === 'guide' ? <AddGuide />
           : <EntityTab key={tab} def={def} />
   return (
     <section>

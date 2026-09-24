@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { ArrowLeft, Calendar, FileText, Plus, Save, Scissors } from 'lucide-preact'
 import { COMMON_RANK, DOCUMENT_FORMATS, IMAGE_FORMAT, LOGO_KEY, buildContext, driveIdFrom, countText, extractKeys, formatDate, mockValues, placeholderAt, renderSegments, splitXThread } from '../lib/engine.js'
-import { Alert, Badge, Button, DocLink, Eyebrow, Label, Modal, Spinner, activeOnly, card, copyText, cx, inputCls, useApp } from '../ui/ui.jsx'
+import { Alert, Badge, Button, DocLink, Eyebrow, Label, Modal, Spinner, activeOnly, card, copyText, cx, formatDateTime, inputCls, useApp } from '../ui/ui.jsx'
 import { Segments } from './Create.jsx'
 
 const ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画像']
@@ -23,7 +23,7 @@ const MEDIA_PRESETS = [
 const formatKind = (format) => (format === IMAGE_FORMAT ? 'slides' : DOCUMENT_FORMATS.includes(format) ? 'document' : 'text')
 
 export function TemplateEditor({ mode, template, onClose }) {
-  const { api, data, adminCall, reload, notify } = useApp()
+  const { api, data, adminCall, reload, notify, history } = useApp()
   const firstMedia = activeOnly(data.media)[0]
   const [meta, setMeta] = useState(() => ({
     name: template ? (mode === 'create' ? `${template.name}（コピー）` : template.name) : '',
@@ -57,7 +57,28 @@ export function TemplateEditor({ mode, template, onClose }) {
   const items = activeOnly(data.items)
   const itemsByKey = Object.fromEntries(data.items.map((i) => [i.key, i]))
   const settingKeys = data.settings.map((s) => s.key)
-  const ctx = buildContext({ values: mockValues(data.items), items: data.items, settings: data.settings })
+  // プレビューに使うデータ：入力例（既定）／実際の団体（団体情報はマスタ、案件情報は入力例）／過去の履歴の入力値
+  const [previewSource, setPreviewSource] = useState('')
+  const previewValues = useMemo(() => {
+    const base = mockValues(data.items)
+    const [kind, id] = previewSource.split(':')
+    if (kind === 'org') {
+      const o = data.orgs.find((x) => x.id === id)
+      if (o) {
+        const orgKeys = data.items.filter((i) => i.category === '団体').map((i) => i.key)
+        return { ...base, ...Object.fromEntries(orgKeys.map((k) => [k, o.values[k] ?? ''])), ...o.values, [LOGO_KEY]: o.logoFileId ? '［ロゴ画像］' : '' }
+      }
+    }
+    if (kind === 'history') {
+      const h = (history || []).find((x) => x.id === id)
+      if (h) {
+        const o = data.orgs.find((x) => x.id === h.orgId)
+        return { ...base, ...h.values, [LOGO_KEY]: o?.logoFileId ? '［ロゴ画像］' : '' }
+      }
+    }
+    return base
+  }, [previewSource, data.items, data.orgs, history])
+  const ctx = buildContext({ values: previewValues, items: data.items, settings: data.settings })
 
   useEffect(() => {
     if (!pendingCaret.current) return
@@ -336,7 +357,7 @@ export function TemplateEditor({ mode, template, onClose }) {
           </div>
         </div>
 
-        <TemplatePreview fieldDefs={fieldDefs} fields={fields} ctx={ctx} />
+        <TemplatePreview fieldDefs={fieldDefs} fields={fields} ctx={ctx} source={previewSource} onSource={setPreviewSource} history={history} />
       </div>
 
       {datePicker && (
@@ -374,11 +395,27 @@ export function TemplateEditor({ mode, template, onClose }) {
   )
 }
 
-function TemplatePreview({ fieldDefs, fields, ctx }) {
+function TemplatePreview({ fieldDefs, fields, ctx, source, onSource, history }) {
+  const { data } = useApp()
+  const kind = source.split(':')[0]
   return (
     <div class="h-fit self-start rounded-2xl border border-[#9bdcc5] bg-[#f0fff9] p-5 shadow-sm xl:sticky xl:top-6">
-      <p class="text-xs font-bold tracking-[0.18em] text-[#16866b]">PREVIEW / MOCK DATA</p>
-      <h2 class="mt-1 font-bold text-[#17483e]">入力例を差し込んだプレビュー</h2>
+      <p class="text-xs font-bold tracking-[0.18em] text-[#16866b]">PREVIEW / {kind === 'org' ? 'ORGANIZATION' : kind === 'history' ? 'HISTORY' : 'MOCK DATA'}</p>
+      <h2 class="mt-1 font-bold text-[#17483e]">{kind === 'org' ? '団体の登録内容を差し込んだプレビュー' : kind === 'history' ? '過去の入力値を差し込んだプレビュー' : '入力例を差し込んだプレビュー'}</h2>
+      <label class="mt-3 block text-xs font-medium text-[#31816f]">
+        差し込むデータ
+        <select value={source} onChange={(e) => onSource(e.currentTarget.value)} aria-label="プレビューに使うデータ" class="mt-1 h-9 w-full rounded-lg border border-[#b7e8d7] bg-white px-2 text-sm text-slate-700">
+          <option value="">入力例（入力項目の「入力例」）</option>
+          <optgroup label="団体（団体情報はマスタ、案件情報は入力例）">
+            {activeOnly(data.orgs).map((o) => <option key={o.id} value={`org:${o.id}`}>{o.values['団体名'] || o.id}</option>)}
+          </optgroup>
+          {history?.length > 0 && (
+            <optgroup label="履歴（そのとき入力した値）">
+              {history.slice(0, 50).map((h) => <option key={h.id} value={`history:${h.id}`}>{[formatDateTime(h.createdAt), h.orgName, h.id].filter(Boolean).join(' · ')}</option>)}
+            </optgroup>
+          )}
+        </select>
+      </label>
       <div class="mt-4 max-h-[760px] space-y-5 overflow-auto rounded-xl border border-[#b7e8d7] bg-white p-5 text-sm leading-7 text-slate-700">
         {fieldDefs.map((d) => {
           const segments = renderSegments(fields[d.fieldKey] ?? '', ctx)

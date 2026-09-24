@@ -1,5 +1,6 @@
 // GAS クライアント。利用者キーを全リクエストに、管理者パスは管理者操作に付与する。
 import { createMockBackend, MOCK_ADMIN_PASSWORD } from './mock-backend.js'
+import { readAuthor } from './storage.js'
 
 const ADMIN_PASS_KEY = 'pg-admin-pass'
 
@@ -75,7 +76,8 @@ export function createApi(config) {
   }
 
   async function call(action, payload = {}, { admin = false, adminPassOverride } = {}) {
-    const body = { action, key, payload }
+    // actor は操作ログに残す名前（作成者名。本人確認ではなく記録用）
+    const body = { action, key, payload, actor: readAuthor() }
     const pass = adminPassOverride ?? (admin ? adminPass : '')
     if (pass) body.adminPass = pass
     const res = await send(body)

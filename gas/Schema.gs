@@ -54,14 +54,22 @@ var SCHEMA = {
     sheet: '履歴出力', parent: 'history', parentProp: 'historyId',
     cols: [['historyId', '履歴ID'], ['mediaId', '媒体ID'], ['templateId', 'テンプレID'], ['fieldKey', '欄キー'], ['text', '最終文面'], ['edited', '修正あり']],
   },
+  // 変更の記録（追加・編集・無効化・削除）。書き込みは GAS だけが行う
+  logs: {
+    sheet: '操作ログ',
+    cols: [['at', '日時'], ['actor', '操作者'], ['role', '権限'], ['action', '操作'], ['entity', '種類'], ['key', '対象'], ['detail', '内容']],
+  },
 };
 
 var BOOL_PROPS = { active: true, required: true, edited: true };
 var NUMBER_PROPS = { order: true, limit: true };
-var TIMESTAMP_PROPS = { updatedAt: true, createdAt: true };
+var TIMESTAMP_PROPS = { updatedAt: true, createdAt: true, at: true };
 
 // 利用者が新規追加できるシート（create）。子シートは親と一緒に保存する
 var CREATABLE = { templates: 'templateFields', media: 'mediaFields', sets: null, ranks: null, items: null, dateFormats: null, orgs: null, settings: null };
+
+// 操作ログの「種類」に書く名前
+var ENTITY_LABELS = { templates: 'テンプレート', media: '媒体', sets: 'セット', ranks: 'ランク', items: '入力項目', dateFormats: '日付書式', orgs: '団体', settings: '共通設定', history: '履歴' };
 
 var COMMON_RANK = '共通';
 var ITEM_CATEGORIES = ['団体', '案件'];

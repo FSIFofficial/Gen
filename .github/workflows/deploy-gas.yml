@@ -1,0 +1,78 @@
+name: Deploy GAS
+
+# gas/ を変えて main に push したら、GAS プロジェクトにコードを反映し、
+# 既存のウェブアプリのデプロイを新しいバージョンに更新する（URL は変わらない）。
+# Secrets（CLASPRC_JSON / CLASP_SCRIPT_ID / GAS_DEPLOYMENT_ID）が未設定なら何もしない。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'gas/**'
+      - '.github/workflows/deploy-gas.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-gas
+  cancel-in-progress: false
+
+jobs:
+  deploy-gas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # GAS Core のテストが通ったものだけを反映する
+      - run: npm test
+
+      - name: Check secrets
+        id: secrets
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          CLASP_SCRIPT_ID: ${{ secrets.CLASP_SCRIPT_ID }}
+          GAS_DEPLOYMENT_ID: ${{ secrets.GAS_DEPLOYMENT_ID }}
+        run: |
+          missing=""
+          for name in CLASPRC_JSON CLASP_SCRIPT_ID GAS_DEPLOYMENT_ID; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::notice::Secrets が未設定のため GAS の自動デプロイを省略しました:$missing（CLAUDE.md の「GAS の自動デプロイ」を参照）"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare clasp
+        if: steps.secrets.outputs.configured == 'true'
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          CLASP_SCRIPT_ID: ${{ secrets.CLASP_SCRIPT_ID }}
+        run: |
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          node -e 'JSON.parse(require("fs").readFileSync(process.env.HOME + "/.clasprc.json", "utf8"))' \
+            || { echo "::error::CLASPRC_JSON が JSON として読めません（~/.clasprc.json の中身をそのまま登録してください）"; exit 1; }
+          printf '{"scriptId":"%s","rootDir":"gas"}' "$CLASP_SCRIPT_ID" > .clasp.json
+
+      # gas/ の内容で GAS プロジェクトのファイルを置き換える（エディタで手で足したファイルは消える）
+      - name: Push code
+        if: steps.secrets.outputs.configured == 'true'
+        run: npx --yes @google/clasp@2.4.2 push --force
+
+      # 既存のデプロイ（ウェブアプリの URL）を新しいバージョンで更新する
+      - name: Update web app deployment
+        if: steps.secrets.outputs.configured == 'true'
+        env:
+          GAS_DEPLOYMENT_ID: ${{ secrets.GAS_DEPLOYMENT_ID }}
+        run: npx --yes @google/clasp@2.4.2 deploy --deploymentId "$GAS_DEPLOYMENT_ID" --description "GitHub ${GITHUB_SHA::7}"
+
+      - name: Clean up credentials
+        if: always()
+        run: rm -f "$HOME/.clasprc.json" .clasp.json

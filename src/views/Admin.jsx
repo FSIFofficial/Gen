@@ -1,7 +1,10 @@
-import { useState } from 'preact/hooks'
-import { Ban, Copy, Lock, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-preact'
+import { useEffect, useState } from 'preact/hooks'
+import { Ban, Copy, Lock, Pencil, Plus, RotateCcw, Search, Trash2, Upload } from 'lucide-preact'
+import { mapOrgColumns, orgRowsFromTable, parseDelimited } from '../lib/csv.js'
 import { COMMON_RANK, formatDate, isFileTemplate, isImageTemplate } from '../lib/engine.js'
+import { readAuthor, saveAuthor } from '../lib/storage.js'
 import { Alert, Badge, Button, DocLink, Empty, ImageUpload, Eyebrow, ItemInput, Label, Modal, Spinner, card, cx, formatDateTime, inputCls, textareaCls, useApp } from '../ui/ui.jsx'
+import { AddGuide } from './Guide.jsx'
 import { TemplateEditor } from './TemplateEditor.jsx'
 
 const ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画像']
@@ -62,6 +65,8 @@ const ENTITIES = [
       { prop: 'description', label: '説明' },
     ],
   },
+  { id: 'guide', label: '追加方法' },
+  { id: 'logs', label: '操作ログ' },
 ]
 
 export function Admin() {
@@ -72,6 +77,12 @@ export function Admin() {
   if (editor) return <TemplateEditor {...editor} onClose={() => setEditor(null)} />
 
   const def = ENTITIES.find((e) => e.id === tab)
+  const content =
+    tab === 'templates' ? <TemplateList onOpen={setEditor} />
+      : tab === 'orgs' ? <EntityTab key="orgs" def={orgDef(data)} headerExtra={<BulkOrgButton />} />
+        : tab === 'logs' ? <LogList />
+          : tab === 'guide' ? <AddGuide />
+          : <EntityTab key={tab} def={def} />
   return (
     <section>
       <div class="flex flex-col justify-between gap-4 md:flex-row md:items-end">
@@ -80,22 +91,40 @@ export function Admin() {
           <h1 class="mt-2 text-3xl font-bold">管理</h1>
           <p class="mt-2 text-sm text-slate-500">一覧の閲覧と新規追加はどなたでもできます。既存データの編集・無効化には管理者パスワードが必要です。</p>
         </div>
-        {!isAdmin && (
-          <Button variant="outline" icon={Lock} onClick={requireAdmin}>管理者パスワードを入力</Button>
-        )}
+        <div class="flex flex-wrap items-end gap-3">
+          <ActorName />
+          {!isAdmin && (
+            <Button variant="outline" icon={Lock} onClick={requireAdmin}>管理者パスワードを入力</Button>
+          )}
+        </div>
       </div>
       <div class="mt-6 flex flex-wrap gap-1 rounded-xl bg-[#eef2f8] p-1 text-sm font-medium">
         {ENTITIES.map((e) => (
           <button key={e.id} onClick={() => setTab(e.id)} class={cx('rounded-lg px-3 py-2', tab === e.id ? 'bg-white text-[#1261af] shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
             {e.label}
-            <span class="ml-1 text-xs text-slate-400">{(data[e.id] || []).length}</span>
+            {data[e.id] && <span class="ml-1 text-xs text-slate-400">{data[e.id].length}</span>}
           </button>
         ))}
       </div>
-      <div class="mt-6">
-        {tab === 'templates' ? <TemplateList onOpen={setEditor} /> : tab === 'orgs' ? <EntityTab key="orgs" def={orgDef(data)} /> : <EntityTab key={tab} def={def} />}
-      </div>
+      <div class="mt-6">{content}</div>
     </section>
+  )
+}
+
+// 操作ログに残す名前（資料作成の「作成者名」と共通。本人確認ではなく記録用）
+function ActorName() {
+  const [name, setName] = useState(readAuthor())
+  return (
+    <label class="text-xs font-medium text-slate-500">
+      操作者名（操作ログに記録）
+      <input
+        value={name}
+        onInput={(e) => setName(e.currentTarget.value)}
+        onChange={(e) => saveAuthor(e.currentTarget.value.trim())}
+        placeholder="名前を入力"
+        class="mt-1 block h-10 w-44 rounded-lg border border-[#dce5f2] bg-white px-3 text-sm text-[#12233f]"
+      />
+    </label>
   )
 }
 
@@ -178,7 +207,7 @@ function cellText(def, record, prop) {
   return String(v ?? '')
 }
 
-function EntityTab({ def }) {
+function EntityTab({ def, headerExtra }) {
   const { data } = useApp()
   const [form, setForm] = useState(null)
   const [showInactive, inactiveToggle] = useShowInactive()
@@ -189,6 +218,7 @@ function EntityTab({ def }) {
         <h2 class="font-bold">{def.label}</h2>
         <div class="flex items-center gap-4">
           {!def.noDeactivate && inactiveToggle}
+          {headerExtra}
           <Button size="sm" icon={Plus} onClick={() => setForm({ mode: 'create', record: { ...(def.defaults || {}), values: {}, fields: [] } })}>新規追加</Button>
         </div>
       </div>
@@ -442,6 +472,213 @@ function TemplateList({ onOpen }) {
         </div>
       ) : (
         <Empty>テンプレートがありません。</Empty>
+      )}
+    </div>
+  )
+}
+
+// ---------- 団体の一括登録 ----------
+
+function BulkOrgButton() {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Button variant="outline" size="sm" icon={Upload} onClick={() => setOpen(true)}>一括登録</Button>
+      {open && <BulkOrgModal onClose={() => setOpen(false)} />}
+    </>
+  )
+}
+
+function BulkOrgModal({ onClose }) {
+  const { api, data, reload, notify } = useApp()
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [result, setResult] = useState(null)
+  const byKey = Object.fromEntries(data.items.map((i) => [i.key, i]))
+  const table = parseDelimited(text)
+  const headers = table[0] || []
+  const mapping = mapOrgColumns(headers, data.orgColumns, data.items)
+  const rows = table.length > 1 ? orgRowsFromTable(table, mapping) : []
+  const hasName = mapping.includes('団体名')
+  const existing = new Set(data.orgs.map((o) => String(o.values['団体名'] ?? '').trim()))
+  // 行ごとに登録しない理由（空・登録済み・一括内で重複）。GAS 側でも同じ判定をする
+  const seen = new Set()
+  const notes = rows.map((r) => {
+    const name = r.values['団体名']
+    if (!name) return '団体名が空（登録しません）'
+    if (existing.has(name) || seen.has(name)) return '登録済み・重複（登録しません）'
+    seen.add(name)
+    return ''
+  })
+  const count = notes.filter((n) => !n).length
+
+  const readFile = async (file) => {
+    if (!file) return
+    const buf = await file.arrayBuffer()
+    // Excel で保存した CSV は Shift_JIS のことがあるので、UTF-8 で読めなければ Shift_JIS で読み直す
+    let t = new TextDecoder('utf-8').decode(buf)
+    if (t.includes('\uFFFD')) t = new TextDecoder('shift_jis').decode(buf)
+    setText(t)
+    setResult(null)
+  }
+
+  const submit = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const res = await api.call('bulkCreate', { entity: 'orgs', rows })
+      await reload()
+      setResult(res)
+      notify(`${res.created.length}件の団体を追加しました`)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const colLabel = (k) => byKey[k]?.label || k
+  return (
+    <Modal
+      title="団体の一括登録"
+      wide
+      onClose={onClose}
+      footer={
+        result ? (
+          <Button onClick={onClose}>閉じる</Button>
+        ) : (
+          <>
+            <Button variant="outline" onClick={onClose}>キャンセル</Button>
+            <Button onClick={submit} disabled={busy || !hasName || !count}>{busy && <Spinner />}{count}件を登録</Button>
+          </>
+        )
+      }
+    >
+      {result ? (
+        <div class="grid gap-3 text-sm">
+          <Alert tone="green">{result.created.length}件を追加しました{result.skipped.length > 0 && `（${result.skipped.length}件は登録しませんでした）`}。</Alert>
+          {result.skipped.length > 0 && (
+            <ul class="list-disc pl-5 text-slate-600">
+              {result.skipped.map((s) => <li key={s.row}>{s.row}行目{s.name && `「${s.name}」`}：{s.reason}</li>)}
+            </ul>
+          )}
+          {result.ignoredColumns?.length > 0 && <p class="text-xs text-slate-500">団体マスタに無い列は読み込みませんでした：{result.ignoredColumns.join('、')}</p>}
+        </div>
+      ) : (
+        <div class="grid gap-4">
+          <p class="text-sm text-slate-500">
+            スプレッドシートから見出し行ごとコピーして貼り付けるか、CSV ファイルを選んでください。1行目の見出しは団体マスタの列名（{data.orgColumns.map(colLabel).join('・')}）に合わせます。「団体名」の列は必須です。ロゴは登録後に団体マスタから設定できます。
+          </p>
+          <div class="flex items-center gap-3">
+            <label class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[#dce5f2] bg-white px-3 py-2 text-sm font-medium hover:border-[#3b8dd9]">
+              <Upload class="size-4" />
+              CSV ファイルを選ぶ
+              <input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" class="hidden" onChange={(e) => readFile(e.currentTarget.files[0])} />
+            </label>
+            <span class="text-xs text-slate-400">または下に貼り付け</span>
+          </div>
+          <textarea value={text} onInput={(e) => setText(e.currentTarget.value)} placeholder={`${data.orgColumns.map(colLabel).join('\t')}\n…`} class={cx(textareaCls, 'min-h-32 font-mono text-xs')} aria-label="貼り付け欄" />
+          {headers.length > 0 && (
+            <div>
+              <p class="text-sm font-medium">列の対応</p>
+              <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                {headers.map((h, i) => (
+                  <span key={i} class={cx('rounded-full px-2.5 py-1', mapping[i] ? 'bg-[#effcf6] text-[#17634f]' : 'bg-slate-100 text-slate-400 line-through')} title={mapping[i] ? `→ ${mapping[i]}` : '団体マスタに無い列（読み込みません）'}>
+                    {h || '（空の見出し）'}
+                  </span>
+                ))}
+              </div>
+              {!hasName && <p class="mt-2 text-sm text-red-600">「団体名」の列が見つかりません。1行目が見出しになっているか確認してください。</p>}
+            </div>
+          )}
+          {hasName && rows.length > 0 && (
+            <div class="max-h-72 overflow-auto rounded-xl border border-[#edf1f7]">
+              <table class="w-full text-xs">
+                <thead class="sticky top-0 bg-[#f6f8fc]">
+                  <tr class="text-left text-slate-400">
+                    <th class="px-3 py-2 font-semibold">行</th>
+                    {mapping.filter(Boolean).map((k) => <th key={k} class="px-3 py-2 font-semibold whitespace-nowrap">{colLabel(k)}</th>)}
+                    <th class="px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => {
+                    const note = notes[i]
+                    return (
+                      <tr key={i} class={cx('border-t border-[#f1f4f9]', note && 'text-slate-400')}>
+                        <td class="px-3 py-1.5">{i + 1}</td>
+                        {mapping.filter(Boolean).map((k) => <td key={k} class="max-w-48 truncate px-3 py-1.5" title={r.values[k]}>{r.values[k]}</td>)}
+                        <td class="px-3 py-1.5 whitespace-nowrap text-amber-700">{note}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {error && <Alert tone="red">{error}</Alert>}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+// ---------- 操作ログ ----------
+
+function LogList() {
+  const { api, notify } = useApp()
+  const [logs, setLogs] = useState(null)
+  const [query, setQuery] = useState('')
+  useEffect(() => {
+    api.call('listLogs', { limit: 500 }).then(setLogs).catch((e) => {
+      setLogs([])
+      notify(e.message, 'error')
+    })
+  }, [])
+  const q = query.trim()
+  const rows = (logs || []).filter((l) => !q || [l.actor, l.action, l.entity, l.key, l.detail].some((v) => String(v ?? '').includes(q)))
+  return (
+    <div class={card}>
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-[#edf1f7] px-5 py-4">
+        <div>
+          <h2 class="font-bold">操作ログ</h2>
+          <p class="mt-1 text-xs text-slate-500">追加・編集・無効化・削除の記録（新しい順・最新500件）。操作者名は各自が入力した名前です。</p>
+        </div>
+        <div class="relative">
+          <Search class="absolute top-2.5 left-3 size-4 text-slate-400" />
+          <input value={query} onInput={(e) => setQuery(e.currentTarget.value)} placeholder="操作者・対象・内容で検索" class="h-9 w-64 rounded-lg border border-[#dce5f2] bg-white pr-3 pl-9 text-sm" />
+        </div>
+      </div>
+      {logs === null ? (
+        <Empty>読み込み中…</Empty>
+      ) : rows.length ? (
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-[#edf1f7] text-left text-xs text-slate-400">
+                {['日時', '操作者', '操作', '種類', '対象', '内容'].map((h) => <th key={h} class="px-5 py-3 font-semibold whitespace-nowrap">{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((l, i) => (
+                <tr key={i} class="border-b border-[#f1f4f9] align-top last:border-0">
+                  <td class="px-5 py-3 text-xs whitespace-nowrap text-slate-500">{formatDateTime(l.at)}</td>
+                  <td class="px-5 py-3 whitespace-nowrap">
+                    {l.actor}
+                    {l.role === '管理者' && <span class="ml-2"><Badge tone="green">管理者</Badge></span>}
+                  </td>
+                  <td class="px-5 py-3 whitespace-nowrap"><Badge tone={l.action === '削除' || l.action === '無効化' ? 'gray' : 'blue'}>{l.action}</Badge></td>
+                  <td class="px-5 py-3 whitespace-nowrap">{l.entity}</td>
+                  <td class="px-5 py-3 whitespace-nowrap">{l.key}</td>
+                  <td class="min-w-80 px-5 py-3 text-xs leading-5 break-all whitespace-pre-wrap text-slate-600">{l.detail.split(' / ').join('\n')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <Empty>{q ? '該当する記録はありません。' : 'まだ記録はありません。'}</Empty>
       )}
     </div>
   )

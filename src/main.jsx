@@ -1,6 +1,6 @@
 import { render } from 'preact'
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
-import { Check, History as HistoryIcon, Home as HomeIcon, Plus, RefreshCw, Settings, ShieldCheck, X } from 'lucide-preact'
+import { BookOpen, Check, History as HistoryIcon, Home as HomeIcon, Plus, RefreshCw, Settings, ShieldCheck, X } from 'lucide-preact'
 import { checkInitData, createApi } from './lib/api.js'
 import { resetMockData } from './lib/mock-backend.js'
 import { AppContext, Alert, Button, Label, Modal, Spinner, cx, inputCls } from './ui/ui.jsx'
@@ -8,6 +8,7 @@ import { Home } from './views/Home.jsx'
 import { Create } from './views/Create.jsx'
 import { HistoryView } from './views/History.jsx'
 import { Admin } from './views/Admin.jsx'
+import { Usage } from './views/Guide.jsx'
 
 const config = window.APP_CONFIG || { mock: true }
 const api = createApi(config)
@@ -114,6 +115,7 @@ function App() {
     ['create', '新規作成', Plus, () => startCreate()],
     ['history', '履歴', HistoryIcon, () => go('history')],
     ['admin', '管理', Settings, () => go('admin')],
+    ['guide', '使い方', BookOpen, () => go('guide')],
   ]
 
   return (
@@ -188,6 +190,7 @@ function App() {
               {view === 'create' && <Create key={seed.id} seed={seed} />}
               {view === 'history' && <HistoryView />}
               {view === 'admin' && <Admin />}
+              {view === 'guide' && <Usage />}
             </>
           )}
         </main>

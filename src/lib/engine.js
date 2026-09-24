@@ -77,10 +77,17 @@ export function renderSegments(template, ctx) {
   return segments
 }
 
-// 出力用。未入力の項目は空にして、空行が3行以上続いたら詰める
+// 出力用。差し込みがすべて未入力の行は「今回のポイント：」のような見出しごと消し、
+// 空行が3行以上続いたら詰める
 export function renderTemplate(template, ctx) {
-  const out = renderSegments(template, ctx).map((s) => (s.missing ? '' : s.text)).join('')
-  return tidy(out)
+  const lines = []
+  for (const line of String(template ?? '').split('\n')) {
+    const segments = renderSegments(line, ctx)
+    const inserted = segments.filter((s) => s.key)
+    if (inserted.length && inserted.every((s) => s.missing)) continue
+    lines.push(segments.map((s) => (s.missing ? '' : s.text)).join(''))
+  }
+  return tidy(lines.join('\n'))
 }
 
 export function tidy(text) {

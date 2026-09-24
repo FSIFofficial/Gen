@@ -4,6 +4,10 @@ export const COMMON_RANK = '共通'
 export const DEFAULT_DATE_FORMAT = 'YYYY年M月D日'
 export const X_LIMIT = 280
 export const X_URL_WEIGHT = 23
+// Google ドキュメントの雛形に差し込んで書き出す出力形式
+export const DOCUMENT_FORMATS = ['PDF', 'Docx']
+
+export const isDocumentTemplate = (t) => DOCUMENT_FORMATS.includes(t?.format)
 
 // {{項目名}} または {{項目名:書式}}
 const PLACEHOLDER_RE = /\{\{\s*([^{}:]+?)\s*(?::\s*([^{}]*?)\s*)?\}\}/g
@@ -88,6 +92,18 @@ export function renderTemplate(template, ctx) {
     lines.push(segments.map((s) => (s.missing ? '' : s.text)).join(''))
   }
   return tidy(lines.join('\n'))
+}
+
+// 書類用。雛形ドキュメント側では行を消せないので、未入力は空にするだけで行も空行もそのまま残す
+export function renderDocumentText(template, ctx) {
+  return renderSegments(template, ctx).map((s) => (s.missing ? '' : s.text)).join('')
+}
+
+// 書類の差し込み表：{ '{{団体名}}': 'サンプル団体', '{{締結日:M/D}}': '9/24', ... }（未入力は空文字）
+export function documentReplacements(template, ctx) {
+  const out = {}
+  for (const p of extractPlaceholders(template)) out[p.raw] = resolveValue(p.key, p.format, ctx) ?? ''
+  return out
 }
 
 export function tidy(text) {
@@ -221,7 +237,8 @@ export function generateOutputs({ picked, mediaIds, media, ctx }) {
     if (!t || !m) continue
     const fields = {}
     const keys = m.fields.length ? m.fields.map((f) => f.fieldKey) : Object.keys(t.fields)
-    for (const key of keys) fields[key] = renderTemplate(t.fields[key] ?? '', ctx)
+    const render = isDocumentTemplate(t) ? renderDocumentText : renderTemplate
+    for (const key of keys) fields[key] = render(t.fields[key] ?? '', ctx)
     out[mediaId] = { templateId: t.id, fields }
   }
   return out

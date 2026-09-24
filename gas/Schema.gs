@@ -67,5 +67,7 @@ var COMMON_RANK = '共通';
 var ITEM_CATEGORIES = ['団体', '案件'];
 var ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画像'];
 var OUTPUT_FORMATS = ['テキスト', 'PDF', 'Docx', '画像'];
+// Google ドキュメントの雛形に差し込んで書き出す形式
+var DOCUMENT_FORMATS = ['PDF', 'Docx'];
 var COUNT_MODES = ['通常', 'X方式'];
 var SPLIT_RULES = ['なし', 'スレッド分割'];

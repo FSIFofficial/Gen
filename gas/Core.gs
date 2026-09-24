@@ -1,6 +1,7 @@
 /**
  * リクエスト処理の本体。GAS 固有の API には触らず、env 経由で DB・設定・ロックを受け取る。
- *   env = { db, props: { userKey, adminPassword }, withLock(fn), now() }
+ *   env = { db, docs, props: { userKey, adminPassword }, withLock(fn), now() }
+ *   docs は Google ドキュメントの雛形を扱うアダプタ：readText(fileId) / render({ fileId, replacements, format, fileName })
  * GAS では Main.gs が SheetDb で env を組み立てる。フロントのモックモードとテストでは MemoryDb を使う。
  */
 
@@ -14,6 +15,8 @@ var ACTIONS = {
   update: { fn: actionUpdate_, write: true, admin: true },
   deactivate: { fn: actionDeactivate_, write: true, admin: true },
   deleteHistory: { fn: actionDeleteHistory_, write: true, admin: true },
+  readDocument: { fn: actionReadDocument_ },
+  renderDocument: { fn: actionRenderDocument_ },
 };
 
 function handleRequest(req, env) {
@@ -243,6 +246,8 @@ function validate_(entity, obj, env, table, isCreate) {
       requireText_(obj.rank, 'ランク');
       if (!obj.format) obj.format = 'テキスト';
       oneOf_(obj.format, OUTPUT_FORMATS, '出力形式');
+      if (obj.format === '画像') throw appError_('VALIDATION', '画像の出力は今後対応予定です');
+      if (isDocumentFormat_(obj.format)) requireText_(obj.fileId, '雛形ファイルID');
       if (!findRecord_(loadTable_(env, 'sets'), obj.setId)) throw appError_('VALIDATION', 'セットが見つかりません');
       if (!findRecord_(loadTable_(env, 'media'), obj.mediaId)) throw appError_('VALIDATION', '媒体が見つかりません');
       if (obj.rank !== COMMON_RANK && !findRecord_(loadTable_(env, 'ranks'), obj.rank)) throw appError_('VALIDATION', 'ランクが見つかりません');
@@ -351,7 +356,9 @@ function actionCreate_(payload, env) {
   var s = table.schema;
   var obj = pickData_(entity, payload.data || {});
   validate_(entity, obj, env, table, true);
-  var children = CREATABLE[entity] && payload.children ? childRows_(entity, payload.children) : null;
+  var children = entity === 'templates' && isDocumentFormat_(obj.format)
+    ? documentChildren_(env, obj.fileId)
+    : CREATABLE[entity] && payload.children ? childRows_(entity, payload.children) : null;
   if (s.idPrefix) obj.id = nextId_(s.idPrefix, table.records);
   if (hasCol_(s, 'active')) obj.active = true;
   if (hasCol_(s, 'updatedAt')) obj.updatedAt = env.now();
@@ -376,7 +383,9 @@ function actionUpdate_(payload, env) {
     else obj[k] = data[k];
   });
   validate_(entity, obj, env, table, false);
-  var children = CREATABLE[entity] && payload.children ? childRows_(entity, payload.children) : null;
+  var children = entity === 'templates' && isDocumentFormat_(obj.format)
+    ? documentChildren_(env, obj.fileId)
+    : CREATABLE[entity] && payload.children ? childRows_(entity, payload.children) : null;
   if (hasCol_(s, 'updatedAt')) obj.updatedAt = env.now();
   if (entity === 'items' && obj.category === '団体') ensureOrgColumn_(env, obj.key);
   env.db.updateRow(s.sheet, rec.index, toRow_(table, obj));
@@ -450,6 +459,44 @@ function actionDeleteHistory_(payload, env) {
   replaceChildren_(env, 'historyOutputs', rec.obj.id, []);
   env.db.deleteRows(SCHEMA.history.sheet, [rec.index]);
   return { id: rec.obj.id };
+}
+
+// ---------- 書類（PDF / Docx） ----------
+
+function isDocumentFormat_(format) {
+  return DOCUMENT_FORMATS.indexOf(format) >= 0;
+}
+
+function docs_(env) {
+  if (!env.docs) throw appError_('DOCS_UNAVAILABLE', '書類の出力に対応していない環境です');
+  return env.docs;
+}
+
+// 雛形ドキュメントの本文を読んで「本文」欄に写す。画面はこれを使って入力フォームとプレビューを作る
+function documentChildren_(env, fileId) {
+  return [{ fieldKey: '本文', content: docs_(env).readText(fileId) }];
+}
+
+function actionReadDocument_(payload, env) {
+  requireText_(payload.fileId, '雛形ファイルID');
+  return { text: docs_(env).readText(str_(payload.fileId)) };
+}
+
+// replacements は画面側で解決済みの { '{{団体名}}': 'サンプル団体', '{{締結日:M/D}}': '9/24', ... }
+function actionRenderDocument_(payload, env) {
+  var rec = findRecord_(loadTable_(env, 'templates'), payload.templateId);
+  if (!rec) throw appError_('NOT_FOUND', 'テンプレートが見つかりません');
+  var t = rec.obj;
+  if (!isDocumentFormat_(t.format) || !t.fileId) throw appError_('VALIDATION', 'このテンプレートは書類の出力に対応していません');
+  var format = payload.format || t.format;
+  oneOf_(format, DOCUMENT_FORMATS, '出力形式');
+  var replacements = {};
+  var src = payload.replacements && typeof payload.replacements === 'object' ? payload.replacements : {};
+  Object.keys(src).forEach(function (k) {
+    if (/^\{\{[^{}]+\}\}$/.test(k)) replacements[k] = String(src[k] == null ? '' : src[k]);
+  });
+  var fileName = str_(payload.fileName).replace(/[\\/:*?"<>|]/g, '_') || t.name;
+  return docs_(env).render({ fileId: t.fileId, replacements: replacements, format: format, fileName: fileName });
 }
 
 // ---------- 初期化 ----------

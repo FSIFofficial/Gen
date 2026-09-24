@@ -2,6 +2,25 @@
  * setup() で投入するモックデータ。実在しない情報のみ。
  * プロパティ名は SCHEMA の cols に合わせる（団体マスタの項目は values に入れる）。
  */
+// モックモード・テストで使う雛形ドキュメント（本番では Google ドキュメントを使う）
+var MOCK_DOCUMENTS = {
+  SAMPLE_CONTRACT: [
+    'サンプル連携契約書',
+    '',
+    '{{運営団体名}}（以下「甲」という。）と{{団体名}}（以下「乙」という。）は、次のとおり連携に関する契約を締結する。',
+    '',
+    '第1条（連携内容）',
+    '{{連携内容}}',
+    '',
+    '第2条（期間）',
+    '本契約の期間は、{{締結日}}から{{連携期間}}か月とする。',
+    '',
+    '締結日：{{締結日}}',
+    '甲：{{運営団体名}}',
+    '乙：{{団体名}}　代表者：{{代表者名}}',
+  ].join('\n'),
+};
+
 var MOCK_DATA = {
   sets: [
     { id: 'S001', name: '締結告知セット', description: 'パートナー締結時に、メール・SNS・note・HPニュースをまとめて作成します。', order: 1, active: true },
@@ -16,6 +35,7 @@ var MOCK_DATA = {
     { id: 'M003', name: 'Instagram', order: 3, active: true },
     { id: 'M004', name: 'note', order: 4, active: true },
     { id: 'M005', name: 'HPニュース', order: 5, active: true },
+    { id: 'M006', name: '契約書', order: 6, active: true },
   ],
   mediaFields: [
     { mediaId: 'M001', fieldKey: '件名', label: '件名', limit: '', countMode: '通常', splitRule: 'なし', order: 1 },
@@ -27,6 +47,7 @@ var MOCK_DATA = {
     { mediaId: 'M004', fieldKey: '本文', label: '本文', limit: '', countMode: '通常', splitRule: 'なし', order: 2 },
     { mediaId: 'M005', fieldKey: 'タイトル', label: 'タイトル', limit: '', countMode: '通常', splitRule: 'なし', order: 1 },
     { mediaId: 'M005', fieldKey: '本文', label: '本文', limit: '', countMode: '通常', splitRule: 'なし', order: 2 },
+    { mediaId: 'M006', fieldKey: '本文', label: '書類の内容', limit: '', countMode: '通常', splitRule: 'なし', order: 1 },
   ],
   dateFormats: [
     { label: '2026年9月24日', format: 'YYYY年M月D日', order: 1, active: true },
@@ -86,8 +107,11 @@ var MOCK_DATA = {
     { id: 'T005', name: '締結告知note（ゴールド）', setId: 'S001', mediaId: 'M004', rank: 'ゴールド', format: 'テキスト', fileId: '', active: true },
     { id: 'T006', name: '締結告知note（共通）', setId: 'S001', mediaId: 'M004', rank: '共通', format: 'テキスト', fileId: '', active: true },
     { id: 'T007', name: '締結告知HPニュース（共通）', setId: 'S001', mediaId: 'M005', rank: '共通', format: 'テキスト', fileId: '', active: true },
+    { id: 'T008', name: 'サンプル連携契約書（共通）', setId: 'S001', mediaId: 'M006', rank: '共通', format: 'PDF', fileId: 'SAMPLE_CONTRACT', active: true },
   ],
+  // PDF / Docx のテンプレは、雛形ドキュメントの本文を「本文」欄に写しておく（フォーム生成とプレビュー用）
   templateFields: [
+    { templateId: 'T008', fieldKey: '本文', content: MOCK_DOCUMENTS.SAMPLE_CONTRACT },
     { templateId: 'T001', fieldKey: '件名', content: '【パートナー締結のお知らせ】{{団体名}}様' },
     { templateId: 'T001', fieldKey: '本文', content: [
       '{{団体名}}',

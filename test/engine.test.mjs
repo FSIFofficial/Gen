@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  countX, countPlain, extractKeys, extractPlaceholders, formatDate, formItemsFor, generateOutputs, buildContext,
+  countX, documentReplacements, renderDocumentText, countPlain, extractKeys, extractPlaceholders, formatDate, formItemsFor, generateOutputs, buildContext,
   pickTemplates, placeholderAt, renderSegments, renderTemplate, splitBySeparator, splitXThread,
 } from '../src/lib/engine.js'
 
@@ -113,4 +113,10 @@ test('generateOutputs と formItemsFor', () => {
   assert.deepEqual(form.caseItems.map((i) => i.key), ['締結日'])
   assert.deepEqual(form.settingKeys, ['署名'])
   assert.deepEqual(form.unknownKeys, ['謎'])
+})
+
+test('書類：行を消さずに差し込み、差し込み表を作る', () => {
+  const tpl = '甲：{{署名}}\n乙：{{団体名}}\n締結日：{{締結日:M/D(曜)}}'
+  assert.equal(renderDocumentText(tpl, ctx({ 締結日: '2026-09-24' })), '甲：サンプル運営事務局\n乙：\n締結日：9/24(木)')
+  assert.deepEqual(documentReplacements(tpl, ctx({ 締結日: '2026-09-24' })), { '{{署名}}': 'サンプル運営事務局', '{{団体名}}': '', '{{締結日:M/D(曜)}}': '9/24(木)' })
 })

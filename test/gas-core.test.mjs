@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { MemoryDb, loadGasCore } from '../src/lib/memory-db.js'
-import { buildContext, generateOutputs, pickTemplates } from '../src/lib/engine.js'
+import { MemoryDb, createMockDocs, loadGasCore } from '../src/lib/memory-db.js'
+import { buildContext, documentReplacements, generateOutputs, pickTemplates } from '../src/lib/engine.js'
 
 const read = (f) => readFileSync(new URL(`../gas/${f}`, import.meta.url), 'utf8')
 const gas = loadGasCore({ schema: read('Schema.gs'), mockData: read('MockData.gs'), core: read('Core.gs') })
@@ -13,6 +13,7 @@ function setup() {
   let t = 0
   const env = {
     db,
+    docs: createMockDocs({ ...gas.MOCK_DOCUMENTS, OTHER_DOC: '別の雛形 {{団体名}}' }),
     props: { userKey: 'user-key', adminPassword: 'admin-pass' },
     withLock: (fn) => fn(),
     now: () => new Date(Date.UTC(2026, 8, 24, 0, 0, t++)),
@@ -45,8 +46,8 @@ test('init：モックデータが一括で返り、生成まで通る', () => {
   const res = call('init')
   assert.equal(res.ok, true)
   const d = res.data
-  assert.equal(d.media.length, 5)
-  assert.equal(d.templates.length, 7)
+  assert.equal(d.media.length, 6)
+  assert.equal(d.templates.length, 8)
   assert.equal(d.media.find((m) => m.id === 'M002').fields[0].countMode, 'X方式')
   assert.equal(d.media.find((m) => m.id === 'M002').fields[0].limit, 280)
   assert.equal(d.orgs[0].values['団体名'], 'サンプル団体')
@@ -68,8 +69,8 @@ test('create：利用者が追加でき、IDが採番される', () => {
   const r = call('create', { entity: 'sets', data: { name: '新セット', order: 2 } })
   assert.deepEqual(r, { ok: true, data: { key: 'S002' } })
   const t = call('create', { entity: 'templates', data: { name: '新テンプレ', setId: 'S002', mediaId: 'M001', rank: '共通' }, children: { fields: { 件名: 'a', 本文: 'b' } } })
-  assert.equal(t.data.key, 'T008')
-  const tpl = call('init').data.templates.find((x) => x.id === 'T008')
+  assert.equal(t.data.key, 'T009')
+  const tpl = call('init').data.templates.find((x) => x.id === 'T009')
   assert.deepEqual(tpl.fields, { 件名: 'a', 本文: 'b' })
   assert.equal(tpl.format, 'テキスト')
 })
@@ -156,4 +157,32 @@ test('seedTables：既存データがあるシートは上書きしない', () =
   const seeded = gas.seedTables(db, new Date())
   assert.deepEqual(seeded, [])
   assert.equal(call('init').data.sets.length, 2)
+})
+
+test('書類テンプレ：雛形の本文を読み込み、差し込んで出力する', () => {
+  const { call } = setup()
+  assert.equal(call('create', { entity: 'templates', data: { name: '書類', setId: 'S001', mediaId: 'M006', rank: '共通', format: 'PDF' } }).error, 'VALIDATION')
+  assert.equal(call('create', { entity: 'templates', data: { name: '書類', setId: 'S001', mediaId: 'M006', rank: '共通', format: 'PDF', fileId: 'NOPE' } }).error, 'DOC_NOT_FOUND')
+  assert.equal(call('create', { entity: 'templates', data: { name: '画像', setId: 'S001', mediaId: 'M006', rank: '共通', format: '画像' } }).error, 'VALIDATION')
+
+  // 画面から送られた欄は無視し、雛形の本文を「本文」欄に写す
+  const created = call('create', { entity: 'templates', data: { name: '書類', setId: 'S001', mediaId: 'M006', rank: 'ゴールド', format: 'Docx', fileId: 'OTHER_DOC' }, children: { fields: { 本文: '無視される' } } })
+  const t = call('init').data.templates.find((x) => x.id === created.data.key)
+  assert.deepEqual(t.fields, { 本文: '別の雛形 {{団体名}}' })
+  assert.deepEqual(call('readDocument', { fileId: 'SAMPLE_CONTRACT' }).data.text.split('\n')[0], 'サンプル連携契約書')
+
+  const d = call('init').data
+  const sample = d.templates.find((x) => x.id === 'T008')
+  const ctx = buildContext({ values: { 団体名: 'サンプル団体', 締結日: '2026-09-24' }, items: d.items, settings: d.settings })
+  const replacements = documentReplacements(sample.fields['本文'], ctx)
+  assert.equal(replacements['{{締結日}}'], '2026年9月24日')
+  assert.equal(replacements['{{連携内容}}'], '')
+  const file = call('renderDocument', { templateId: 'T008', format: 'Docx', replacements: { ...replacements, 'bad key': 'x' }, fileName: 'A/B' }).data
+  assert.equal(file.fileName, 'A_B.txt')
+  const text = Buffer.from(file.base64, 'base64').toString('utf8')
+  assert.match(text, /本番ではDocxで出力/)
+  assert.match(text, /サンプル運営フォーラム（以下「甲」という。）とサンプル団体/)
+  assert.ok(!text.includes('{{'))
+  assert.equal(call('renderDocument', { templateId: 'T001' }).error, 'VALIDATION')
+  assert.equal(call('renderDocument', { templateId: 'T008', format: 'Excel' }).error, 'VALIDATION')
 })

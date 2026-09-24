@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks'
-import { ArrowLeft, ArrowRight, Clipboard, Printer, Save } from 'lucide-preact'
-import { countText, splitXThread } from '../lib/engine.js'
+import { ArrowLeft, ArrowRight, Clipboard, Download, Printer, Save } from 'lucide-preact'
+import { DOCUMENT_FORMATS, countText, isDocumentTemplate, splitXThread } from '../lib/engine.js'
 import { Alert, Badge, Button, Eyebrow, Spinner, card, copyText, cx, useApp } from '../ui/ui.jsx'
 
 const fieldCls = 'mt-2 w-full rounded-xl border border-[#dce5f2] p-4 font-normal leading-7 outline-none focus:border-[#3b8dd9] focus:ring-2 focus:ring-blue-100'
@@ -14,13 +14,15 @@ export function mediaText(media, fields) {
 
 const escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBack, onChange }) {
+export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBack, onChange, onDownload }) {
   const { data, notify } = useApp()
   const [active, setActive] = useState(mediaIds[0])
   const [numbering, setNumbering] = useState(false)
   const dirty = JSON.stringify(outputs) !== JSON.stringify(original)
   const media = data.media.find((m) => m.id === active)
   const out = outputs[active]
+  const template = data.templates.find((t) => t.id === out?.templateId)
+  const isDocument = isDocumentTemplate(template)
   const mediaName = (id) => data.media.find((m) => m.id === id)?.name || id
 
   useEffect(() => {
@@ -86,15 +88,23 @@ export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBa
             <div class="flex items-center justify-between gap-3 border-b border-[#edf1f7] px-6 py-4">
               <div>
                 <span class="text-xs font-bold tracking-widest text-[#1671c9]">{mediaName(active)}</span>
-                <h2 class="mt-1 text-lg font-bold">公開用の文面</h2>
+                <h2 class="mt-1 text-lg font-bold">{isDocument ? '書類' : '公開用の文面'}</h2>
               </div>
               <div class="flex items-center gap-2">
-                <Badge tone="green">編集可能</Badge>
-                <Button variant="outline" size="sm" icon={Clipboard} onClick={() => copyText(mediaText(media, out.fields), notify)}>すべてコピー</Button>
+                {isDocument ? (
+                  <Badge tone="blue">{template.format}</Badge>
+                ) : (
+                  <>
+                    <Badge tone="green">編集可能</Badge>
+                    <Button variant="outline" size="sm" icon={Clipboard} onClick={() => copyText(mediaText(media, out.fields), notify)}>すべてコピー</Button>
+                  </>
+                )}
               </div>
             </div>
             <div class="space-y-6 p-6">
-              {fieldDefs.map((f) =>
+              {isDocument ? (
+                <DocumentField key={active} template={template} text={out.fields['本文'] ?? ''} onDownload={(format) => onDownload(active, format)} />
+              ) : fieldDefs.map((f) =>
                 f.splitRule === 'スレッド分割' ? (
                   <ThreadField key={`${active}/${f.fieldKey}`} def={f} value={out.fields[f.fieldKey] ?? ''} onInput={(v) => update(f.fieldKey, v)} numbering={numbering} setNumbering={setNumbering} />
                 ) : (
@@ -106,6 +116,37 @@ export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBa
         )}
       </div>
     </section>
+  )
+}
+
+// 書類（PDF / Docx）：Google ドキュメントの雛形に差し込んだファイルを書き出す
+function DocumentField({ template, text, onDownload }) {
+  const [busy, setBusy] = useState('')
+  const formats = [template.format, ...DOCUMENT_FORMATS.filter((f) => f !== template.format)]
+  const run = async (format) => {
+    setBusy(format)
+    try {
+      await onDownload(format)
+    } finally {
+      setBusy('')
+    }
+  }
+  return (
+    <div>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-slate-500">入力した内容を雛形の Google ドキュメントに差し込んで書き出します。</p>
+        <div class="flex gap-2">
+          {formats.map((f, i) => (
+            <Button key={f} variant={i === 0 ? 'primary' : 'outline'} icon={busy === f ? Spinner : Download} onClick={() => run(f)} disabled={Boolean(busy)}>
+              {f}で出力
+            </Button>
+          ))}
+        </div>
+      </div>
+      <p class="mt-5 text-sm font-semibold">差し込み後の内容（確認用）</p>
+      <div class="mt-2 max-h-[560px] overflow-auto rounded-xl border border-[#dce5f2] bg-[#f9fbfe] p-5 text-sm leading-7 whitespace-pre-wrap text-slate-700">{text}</div>
+      <p class="mt-2 text-xs text-slate-400">ここでは編集できません。表や書式は雛形のとおりに出力されます。細かな修正は出力したファイルで行ってください。</p>
+    </div>
   )
 }
 

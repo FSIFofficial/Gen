@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks'
 import { ArrowLeft, ArrowRight, Check, FileText, Plus, Search, Sparkles } from 'lucide-preact'
-import { COMMON_RANK, buildContext, formItemsFor, generateOutputs, pickTemplates, renderSegments, splitXThread } from '../lib/engine.js'
-import { Alert, Badge, Button, Eyebrow, ItemInput, Label, Spinner, activeOnly, card, cx, inputCls, useApp } from '../ui/ui.jsx'
+import { COMMON_RANK, buildContext, documentReplacements, formItemsFor, generateOutputs, isDocumentTemplate, pickTemplates, renderSegments, splitXThread } from '../lib/engine.js'
+import { Alert, Badge, Button, Eyebrow, ItemInput, Label, Spinner, activeOnly, card, cx, downloadBase64, inputCls, useApp } from '../ui/ui.jsx'
 import { Output } from './Output.jsx'
 
 const STEPS = ['団体', 'セット・ランク', '案件情報', '出力']
@@ -185,6 +185,25 @@ export function Create({ seed }) {
     }
   }
 
+  // 書類：雛形の差し込みを画面側で解決して GAS に渡し、書き出したファイルを受け取る
+  const downloadDocument = async (mediaId, format) => {
+    const t = data.templates.find((x) => x.id === outputs[mediaId]?.templateId)
+    if (!t) return notify('テンプレートが見つかりません', 'error')
+    const orgName = values['団体名'] || org?.values['団体名'] || ''
+    try {
+      const file = await api.call('renderDocument', {
+        templateId: t.id,
+        format,
+        replacements: documentReplacements(t.fields['本文'] ?? '', ctx),
+        fileName: [t.name, orgName].filter(Boolean).join('_'),
+      })
+      downloadBase64(file)
+      notify(`${format}を出力しました`)
+    } catch (e) {
+      notify(e.message, 'error')
+    }
+  }
+
   if (busy === 'loading') {
     return (
       <div class="flex items-center justify-center gap-2 py-32 text-sm text-slate-500">
@@ -257,6 +276,7 @@ export function Create({ seed }) {
           onSave={saveEdits}
           onBack={() => setStep(3)}
           onChange={setOutputs}
+          onDownload={downloadDocument}
         />
       )}
 
@@ -413,6 +433,7 @@ function StepSet({ setId, rank, picked, availableMedia, selected, onSet, onRank,
                   <span class="block font-medium">{m.name}</span>
                   <span class="block text-xs text-slate-500">{t.name}</span>
                 </span>
+                {isDocumentTemplate(t) && <Badge tone="green">{t.format}</Badge>}
                 <Badge tone={t.rank === COMMON_RANK ? 'gray' : 'blue'}>{t.rank === COMMON_RANK ? '共通' : `${t.rank}専用`}</Badge>
               </label>
             )

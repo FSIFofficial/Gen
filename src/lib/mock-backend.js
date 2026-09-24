@@ -2,7 +2,7 @@
 import schema from '../../gas/Schema.gs'
 import mockData from '../../gas/MockData.gs'
 import core from '../../gas/Core.gs'
-import { MemoryDb, loadGasCore } from './memory-db.js'
+import { MemoryDb, createMockDocs, loadGasCore } from './memory-db.js'
 
 const STORAGE_KEY = 'pg-mock-db'
 export const MOCK_ADMIN_PASSWORD = 'admin'
@@ -21,6 +21,7 @@ export function createMockBackend() {
 
   const env = {
     db,
+    docs: createMockDocs(gas.MOCK_DOCUMENTS),
     props: { userKey: 'mock', adminPassword: MOCK_ADMIN_PASSWORD },
     withLock: (fn) => fn(),
     now: () => new Date(),

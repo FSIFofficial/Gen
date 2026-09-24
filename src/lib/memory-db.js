@@ -62,5 +62,29 @@ export class MemoryDb {
 // gas/*.gs のソース文字列を評価して、handleRequest などを取り出す
 export function loadGasCore({ schema, mockData, core }) {
   // eslint-disable-next-line no-new-func
-  return new Function(`${schema}\n${mockData}\n${core}\nreturn { handleRequest, seedTables, SCHEMA, MOCK_DATA }`)()
+  return new Function(`${schema}\n${mockData}\n${core}\nreturn { handleRequest, seedTables, SCHEMA, MOCK_DATA, MOCK_DOCUMENTS }`)()
+}
+
+// gas/Main.gs の DocsAdapter の代わり。雛形は MOCK_DOCUMENTS から読み、差し込んだ結果をテキストファイルで返す
+export function createMockDocs(documents) {
+  const notFound = (fileId) => {
+    const e = new Error(`雛形のGoogleドキュメントを開けません（ID：${fileId}）`)
+    e.appCode = 'DOC_NOT_FOUND'
+    return e
+  }
+  return {
+    readText(fileId) {
+      if (!(fileId in documents)) throw notFound(fileId)
+      return documents[fileId]
+    },
+    render({ fileId, replacements, format, fileName }) {
+      let text = this.readText(fileId)
+      for (const [token, value] of Object.entries(replacements)) text = text.split(token).join(value)
+      text = `【モックモード：本番では${format}で出力されます】\n\n${text}`
+      const bytes = new TextEncoder().encode(text)
+      let binary = ''
+      for (const b of bytes) binary += String.fromCharCode(b)
+      return { fileName: `${fileName}.txt`, mimeType: 'text/plain;charset=utf-8', base64: btoa(binary), docUrl: '' }
+    },
+  }
 }

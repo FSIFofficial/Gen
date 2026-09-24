@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import { ArrowLeft, Calendar, Save, Scissors } from 'lucide-preact'
-import { COMMON_RANK, buildContext, countText, extractKeys, formatDate, mockValues, placeholderAt, renderSegments, splitXThread } from '../lib/engine.js'
-import { Alert, Badge, Button, Eyebrow, Label, Modal, Spinner, activeOnly, card, cx, inputCls, useApp } from '../ui/ui.jsx'
+import { ArrowLeft, Calendar, FileText, Save, Scissors } from 'lucide-preact'
+import { COMMON_RANK, DOCUMENT_FORMATS, buildContext, countText, extractKeys, formatDate, mockValues, placeholderAt, renderSegments, splitXThread } from '../lib/engine.js'
+import { Alert, Badge, Button, Eyebrow, Label, Modal, Spinner, activeOnly, card, copyText, cx, inputCls, useApp } from '../ui/ui.jsx'
 import { Segments } from './Create.jsx'
 
 const ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画像']
 const SAMPLE_DATE = '2026-09-24'
+
+// Google ドキュメントの URL でも ID でも受け付ける
+export function docIdFrom(input) {
+  const s = String(input || '').trim()
+  const m = /\/d\/([a-zA-Z0-9_-]{10,})/.exec(s) || /[?&]id=([a-zA-Z0-9_-]{10,})/.exec(s)
+  return m ? m[1] : s
+}
 
 export function TemplateEditor({ mode, template, onClose }) {
   const { api, data, adminCall, reload, notify } = useApp()
@@ -16,6 +23,7 @@ export function TemplateEditor({ mode, template, onClose }) {
     mediaId: template?.mediaId || firstMedia?.id || '',
     rank: template?.rank || COMMON_RANK,
     format: template?.format || 'テキスト',
+    fileId: template?.fileId || '',
   }))
   const [fields, setFields] = useState(() => ({ ...(template?.fields || {}) }))
   const [focus, setFocus] = useState(null) // { fieldKey, start, end }
@@ -25,12 +33,14 @@ export function TemplateEditor({ mode, template, onClose }) {
   const refs = useRef({})
   const pendingCaret = useRef(null)
 
+  const isDocument = DOCUMENT_FORMATS.includes(meta.format)
   const media = data.media.find((m) => m.id === meta.mediaId)
   const fieldDefs = useMemo(() => {
+    if (isDocument) return [{ fieldKey: '本文', label: '雛形の内容' }]
     const defs = media?.fields?.length ? [...media.fields] : [{ fieldKey: '本文', label: '本文' }]
     for (const k of Object.keys(fields)) if (!defs.some((d) => d.fieldKey === k)) defs.push({ fieldKey: k, label: `${k}（この媒体に無い欄）`, orphan: true })
     return defs
-  }, [media, fields])
+  }, [media, fields, isDocument])
 
   const items = activeOnly(data.items)
   const itemsByKey = Object.fromEntries(data.items.map((i) => [i.key, i]))
@@ -50,8 +60,9 @@ export function TemplateEditor({ mode, template, onClose }) {
 
   const activeKey = focus?.fieldKey && fieldDefs.some((d) => d.fieldKey === focus.fieldKey) ? focus.fieldKey : fieldDefs[fieldDefs.length > 1 ? 1 : 0]?.fieldKey
 
-  // カーソル位置に挿入（範囲選択中なら置き換え）
+  // カーソル位置に挿入（範囲選択中なら置き換え）。書類の場合は Google ドキュメントに貼り付けるためにコピーする
   const insert = (text, range) => {
+    if (isDocument) return copyText(text.trim(), notify)
     const key = activeKey
     const cur = fields[key] ?? ''
     const start = range?.start ?? (focus?.fieldKey === key ? focus.start : cur.length)
@@ -129,7 +140,21 @@ export function TemplateEditor({ mode, template, onClose }) {
     await save(true)
   }
 
-  const canSave = meta.name.trim() && meta.setId && meta.mediaId && meta.rank && !busy
+  const [loadingDoc, setLoadingDoc] = useState(false)
+  const loadDocument = async () => {
+    setLoadingDoc(true)
+    try {
+      const { text } = await api.call('readDocument', { fileId: meta.fileId })
+      setFields({ 本文: text })
+      notify('雛形を読み込みました')
+    } catch (e) {
+      notify(e.message, 'error')
+    } finally {
+      setLoadingDoc(false)
+    }
+  }
+
+  const canSave = meta.name.trim() && meta.setId && meta.mediaId && meta.rank && !busy && (!isDocument || (meta.fileId && fields['本文']))
   const activeDef = fieldDefs.find((d) => d.fieldKey === activeKey)
 
   return (
@@ -170,20 +195,56 @@ export function TemplateEditor({ mode, template, onClose }) {
                 {data.ranks.map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}
               </select>
             </Label>
-            <Label label="出力形式" hint="PDF・Docx・画像は今後対応予定です">
-              <select value={meta.format} onChange={(e) => setMeta({ ...meta, format: e.currentTarget.value })} class={inputCls}>
+            <Label label="出力形式" hint="PDF・Docx は Google ドキュメントの雛形に差し込んで書き出します">
+              <select
+                value={meta.format}
+                onChange={(e) => {
+                  const format = e.currentTarget.value
+                  // テキストと書類を切り替えたら本文は引き継がない
+                  if (DOCUMENT_FORMATS.includes(format) !== isDocument) setFields({})
+                  setMeta({ ...meta, format })
+                }}
+                class={inputCls}
+              >
                 <option>テキスト</option>
+                {DOCUMENT_FORMATS.map((f) => <option key={f}>{f}</option>)}
               </select>
             </Label>
           </div>
+
+          {isDocument && (
+            <div class={`${card} p-6`}>
+              <h2 class="font-bold">雛形の Google ドキュメント</h2>
+              <ol class="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-slate-500">
+                <li>Word ファイルはドライブにアップロードし、「ファイル → Google ドキュメントとして保存」で変換する</li>
+                <li>差し込みたい箇所に {'{{団体名}}'} のように書く（下の項目をクリックするとコピーできます）</li>
+                <li>ドキュメントの URL を貼り付けて「読み込む」</li>
+              </ol>
+              <div class="mt-4 flex gap-2">
+                <input
+                  value={meta.fileId}
+                  onInput={(e) => {
+                    setMeta({ ...meta, fileId: docIdFrom(e.currentTarget.value) })
+                    setFields({})
+                  }}
+                  placeholder="https://docs.google.com/document/d/…"
+                  class={cx(inputCls, 'mt-0 font-mono')}
+                />
+                <Button variant="outline" icon={loadingDoc ? Spinner : FileText} onClick={loadDocument} disabled={!meta.fileId || loadingDoc}>読み込む</Button>
+              </div>
+              <p class="mt-2 text-xs text-slate-400">雛形を直したら、ここで保存し直すと差し込み項目とプレビューが更新されます。</p>
+            </div>
+          )}
 
           <div class={`${card} p-6`}>
             <div class="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 class="font-bold">項目を差し込む</h2>
-                <p class="mt-1 text-xs text-slate-500">クリックで「{activeDef?.label || '本文'}」のカーソル位置に挿入します。日付は書式を選べます。</p>
+                <p class="mt-1 text-xs text-slate-500">
+                  {isDocument ? 'クリックで {{項目名}} をコピーします。雛形の Google ドキュメントに貼り付けてください。' : `クリックで「${activeDef?.label || '本文'}」のカーソル位置に挿入します。`}日付は書式を選べます。
+                </p>
               </div>
-              <Button variant="outline" size="sm" icon={Scissors} onClick={() => insert('\n---\n')} title="X のスレッドで次の投稿に分ける区切りを入れます">X区切り</Button>
+              {!isDocument && <Button variant="outline" size="sm" icon={Scissors} onClick={() => insert('\n---\n')} title="X のスレッドで次の投稿に分ける区切りを入れます">X区切り</Button>}
             </div>
             {[['団体', '団体情報'], ['案件', '案件情報']].map(([cat, title]) => (
               <div key={cat} class="mt-4">
@@ -211,7 +272,15 @@ export function TemplateEditor({ mode, template, onClose }) {
           </div>
 
           <div class={`${card} space-y-5 p-6`}>
-            {fieldDefs.map((d) => (
+            {isDocument && (
+              <div>
+                <span class="text-sm font-semibold">雛形の内容（読み込み結果）</span>
+                <div class="mt-2 max-h-[420px] min-h-24 overflow-auto rounded-xl border border-[#dce5f2] bg-[#f9fbfe] p-3 font-mono text-sm leading-6 whitespace-pre-wrap text-slate-600">
+                  {fields['本文'] || '「読み込む」を押すと、雛形の本文がここに表示されます。'}
+                </div>
+              </div>
+            )}
+            {!isDocument && fieldDefs.map((d) => (
               <div key={d.fieldKey}>
                 <div class="flex items-center justify-between gap-2">
                   <span class={cx('text-sm font-semibold', activeKey === d.fieldKey && 'text-[#1261af]')}>{d.label}</span>

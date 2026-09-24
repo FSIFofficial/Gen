@@ -152,3 +152,18 @@ export function formatDateTime(iso) {
 
 export const byOrder = (a, b) => (a.order === '' ? Infinity : a.order) - (b.order === '' ? Infinity : b.order)
 export const activeOnly = (list) => list.filter((x) => x.active !== false)
+
+// GAS から base64 で受け取ったファイルをダウンロードさせる
+export function downloadBase64({ base64, mimeType, fileName }) {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}

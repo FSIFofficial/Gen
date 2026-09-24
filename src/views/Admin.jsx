@@ -65,8 +65,8 @@ const ENTITIES = [
       { prop: 'description', label: '説明' },
     ],
   },
-  { id: 'guide', label: '追加方法' },
   { id: 'logs', label: '操作ログ' },
+  { id: 'guide', label: '追加方法' },
 ]
 
 export function Admin() {

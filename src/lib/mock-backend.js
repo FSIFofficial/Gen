@@ -2,7 +2,7 @@
 import schema from '../../gas/Schema.gs'
 import mockData from '../../gas/MockData.gs'
 import core from '../../gas/Core.gs'
-import { MemoryDb, createMockDocs, createMockFiles, createMockSlides, loadGasCore } from './memory-db.js'
+import { MemoryDb, createMemoryCache, createMockDocs, createMockFiles, createMockSlides, loadGasCore } from './memory-db.js'
 
 const STORAGE_KEY = 'pg-mock-db'
 const FILES_KEY = 'pg-mock-files'
@@ -33,6 +33,7 @@ export function createMockBackend() {
     docs: createMockDocs(gas.MOCK_DOCUMENTS),
     slides: createMockSlides(gas.MOCK_DOCUMENTS, files),
     files,
+    cache: createMemoryCache(),
     props: { userKey: 'mock', adminPassword: MOCK_ADMIN_PASSWORD },
     withLock: (fn) => fn(),
     now: () => new Date(),

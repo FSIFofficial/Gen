@@ -7,6 +7,7 @@
  *   SPREADSHEET_ID  データのスプレッドシートID（スプレッドシートに紐づいたスクリプトなら省略可）
  *   LOGO_FOLDER_ID  団体ロゴなどの画像を保存するフォルダID（一般公開しない。告知画像の {{ロゴ}} はここの画像だけを使う）
  *   OUTPUT_FOLDER_ID 書類・告知画像を出力したときの控えを残すフォルダID（省略時は控えを残さない）
+ *   BACKUP_FOLDER_ID スプレッドシートの毎日のバックアップを保存するフォルダID（省略時はバックアップしない）
  *
  * フロントは CORS のプリフライトを避けるため Content-Type: text/plain で JSON 文字列を POST する。
  */
@@ -43,6 +44,7 @@ function createEnv_() {
     docs: new DocsAdapter(props.getProperty('OUTPUT_FOLDER_ID')),
     slides: new SlidesAdapter(props.getProperty('OUTPUT_FOLDER_ID'), new FilesAdapter(props.getProperty('LOGO_FOLDER_ID'))),
     files: new FilesAdapter(props.getProperty('LOGO_FOLDER_ID')),
+    cache: CacheService.getScriptCache(),
     props: {
       userKey: props.getProperty('USER_KEY'),
       adminPassword: props.getProperty('ADMIN_PASSWORD'),
@@ -270,4 +272,56 @@ function setup() {
     if (!props.getProperty(k)) Logger.log('スクリプトプロパティ ' + k + ' が未設定です');
   });
   Logger.log('モックデータを投入したシート: ' + (seeded.length ? seeded.join(', ') : 'なし（既存データを保持）'));
+}
+
+// ---------- 毎日の自動処理（バックアップ・操作ログの整理） ----------
+
+var BACKUP_KEEP = 30; // バックアップを残す数（古いものからゴミ箱へ）
+var LOG_KEEP_ROWS = 3000; // 操作ログのシートに残す行数（古い行は「操作ログ（過去分）」へ）
+
+/** GASエディタから一度だけ手動実行：毎日 3〜4時に dailyMaintenance が動くようにする（何度実行しても1つだけ） */
+function installDailyTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'dailyMaintenance') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('dailyMaintenance').timeBased().everyDays(1).atHour(3).create();
+  Logger.log('毎日 3〜4時に dailyMaintenance を実行するよう設定しました');
+}
+
+/** 毎日の自動処理。GASエディタから手動で実行してもよい */
+function dailyMaintenance() {
+  var ss = getSpreadsheet_();
+  backupSpreadsheet_(ss);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(60000)) {
+    Logger.log('ほかの保存処理が混み合っていたため、操作ログの整理は次回にします');
+    return;
+  }
+  try {
+    Logger.log('操作ログを過去分シートに移した行数: ' + archiveLogs(new SheetDb(ss), LOG_KEEP_ROWS));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// スプレッドシートを BACKUP_FOLDER_ID のフォルダに丸ごとコピーし、古いバックアップを BACKUP_KEEP 個まで減らす
+function backupSpreadsheet_(ss) {
+  var folderId = PropertiesService.getScriptProperties().getProperty('BACKUP_FOLDER_ID');
+  if (!folderId) {
+    Logger.log('スクリプトプロパティ BACKUP_FOLDER_ID が未設定のため、バックアップは省略しました');
+    return;
+  }
+  var folder = DriveApp.getFolderById(folderId);
+  var prefix = 'バックアップ_' + ss.getName() + '_';
+  var name = prefix + Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd_HHmm');
+  DriveApp.getFileById(ss.getId()).makeCopy(name, folder);
+  var files = [];
+  var it = folder.getFiles();
+  while (it.hasNext()) {
+    var f = it.next();
+    if (f.getName().indexOf(prefix) === 0) files.push(f);
+  }
+  files.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
+  files.slice(BACKUP_KEEP).forEach(function (f) { f.setTrashed(true); });
+  Logger.log('バックアップを作成しました: ' + name + '（保存数 ' + Math.min(files.length, BACKUP_KEEP) + '）');
 }

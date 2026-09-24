@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import { ArrowLeft, Calendar, FileText, Plus, Save, Scissors } from 'lucide-preact'
+import { ArrowLeft, Calendar, FileText, History as HistoryIcon, Plus, Save, Scissors } from 'lucide-preact'
 import { COMMON_RANK, DOCUMENT_FORMATS, IMAGE_FORMAT, LOGO_KEY, buildContext, driveIdFrom, countText, extractKeys, formatDate, mockValues, placeholderAt, renderSegments, splitXThread } from '../lib/engine.js'
 import { Alert, Badge, Button, DocLink, Eyebrow, Label, Modal, Spinner, activeOnly, card, copyText, cx, formatDateTime, inputCls, useApp } from '../ui/ui.jsx'
+import { lineDiff } from '../lib/diff.js'
 import { Segments } from './Create.jsx'
 
 const ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画像']
@@ -38,6 +39,7 @@ export function TemplateEditor({ mode, template, onClose }) {
   const [datePicker, setDatePicker] = useState(null) // { key, replace?: placeholder }
   const [unknownPrompt, setUnknownPrompt] = useState(null)
   const [quickCreate, setQuickCreate] = useState(null) // 'sets' | 'media' | 'ranks'
+  const [showRevisions, setShowRevisions] = useState(false)
   const [busy, setBusy] = useState(false)
   const refs = useRef({})
   const pendingCaret = useRef(null)
@@ -200,7 +202,8 @@ export function TemplateEditor({ mode, template, onClose }) {
           <Eyebrow>TEMPLATE / {mode === 'edit' ? `EDIT ${template.id}` : 'NEW'}</Eyebrow>
           <h1 class="mt-2 text-2xl font-bold">{mode === 'edit' ? 'テンプレートを編集' : 'テンプレートを追加'}</h1>
         </div>
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
+          {mode === 'edit' && <Button variant="outline" icon={HistoryIcon} onClick={() => setShowRevisions(true)}>変更履歴</Button>}
           <Button variant="outline" onClick={onClose}>キャンセル</Button>
           <Button icon={busy ? Spinner : Save} onClick={() => save(false)} disabled={!canSave}>{mode === 'edit' ? '保存（管理者）' : '追加'}</Button>
         </div>
@@ -390,6 +393,20 @@ export function TemplateEditor({ mode, template, onClose }) {
         />
       )}
 
+      {showRevisions && (
+        <RevisionsModal
+          templateId={template.id}
+          current={{ ...meta, fields }}
+          onClose={() => setShowRevisions(false)}
+          onRestore={(t) => {
+            setMeta({ ...meta, ...Object.fromEntries(['name', 'setId', 'mediaId', 'rank', 'format', 'fileId'].map((k) => [k, t[k] ?? meta[k]])) })
+            setFields({ ...(t.fields || {}) })
+            setShowRevisions(false)
+            notify('この版の内容を読み込みました。「保存（管理者）」を押すと、この内容に戻ります')
+          }}
+        />
+      )}
+
       {unknownPrompt && <UnknownItemsModal rows={unknownPrompt} busy={busy} onCancel={() => setUnknownPrompt(null)} onSubmit={registerUnknown} />}
     </section>
   )
@@ -557,6 +574,87 @@ function QuickCreateModal({ kind, fileFormat, onClose, onCreated }) {
           ))}
         {error && <Alert tone="red">{error}</Alert>}
       </div>
+    </Modal>
+  )
+}
+
+// テンプレートの変更履歴。版を選ぶと、いま編集中の内容との差分を出し、編集画面に読み込める（保存は管理者）
+const META_LABELS = [['name', 'テンプレ名'], ['setId', 'セット'], ['mediaId', '媒体'], ['rank', 'ランク'], ['format', '出力形式'], ['fileId', '雛形ファイルID']]
+
+function RevisionsModal({ templateId, current, onClose, onRestore }) {
+  const { api, data, notify } = useApp()
+  const [revisions, setRevisions] = useState(null)
+  const [selected, setSelected] = useState(0)
+  useEffect(() => {
+    api.call('listTemplateRevisions', { templateId }).then(setRevisions).catch((e) => {
+      setRevisions([])
+      notify(e.message, 'error')
+    })
+  }, [])
+  const rev = revisions?.[selected]
+  const t = rev?.template || {}
+  const nameOf = (k, v) => (k === 'setId' ? data.sets : k === 'mediaId' ? data.media : null)?.find((x) => x.id === v)?.name || v
+  const metaChanges = rev ? META_LABELS.filter(([k]) => String(t[k] ?? '') !== String(current[k] ?? '')) : []
+  const fieldKeys = rev ? [...new Set([...Object.keys(t.fields || {}), ...Object.keys(current.fields || {})])] : []
+  const changedFields = fieldKeys.filter((k) => (t.fields?.[k] ?? '') !== (current.fields?.[k] ?? ''))
+  return (
+    <Modal
+      title="変更履歴"
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>閉じる</Button>
+          <Button onClick={() => onRestore(t)} disabled={!rev || (!metaChanges.length && !changedFields.length)}>この版を編集画面に読み込む</Button>
+        </>
+      }
+    >
+      {revisions === null ? (
+        <p class="flex items-center gap-2 py-8 text-sm text-slate-500"><Spinner /> 読み込み中…</p>
+      ) : !revisions.length ? (
+        <p class="py-8 text-sm text-slate-500">まだ変更履歴はありません。このテンプレートを保存すると、保存するたびの内容が残ります。</p>
+      ) : (
+        <div class="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)]">
+          <div class="max-h-[60vh] space-y-1 overflow-auto">
+            {revisions.map((r, i) => (
+              <button key={i} onClick={() => setSelected(i)} class={cx('w-full rounded-lg border px-3 py-2 text-left text-sm', i === selected ? 'border-[#3b8dd9] bg-[#eef7ff]' : 'border-[#e7edf5] hover:border-blue-200')}>
+                <span class="block font-medium">{formatDateTime(r.at)}</span>
+                <span class="block text-xs text-slate-500">{r.actor}{i === 0 && '（最新）'}</span>
+              </button>
+            ))}
+          </div>
+          <div class="min-w-0 space-y-4 text-sm">
+            <p class="text-xs text-slate-500">
+              <span class="mr-1 rounded bg-red-50 px-1 text-red-700">赤</span>がこの版にだけある行、<span class="mx-1 rounded bg-[#effcf6] px-1 text-[#17634f]">緑</span>がいま編集中の内容にだけある行です。
+            </p>
+            {!metaChanges.length && !changedFields.length && <Alert tone="green">いま編集中の内容と同じです。</Alert>}
+            {metaChanges.length > 0 && (
+              <div class="rounded-xl border border-[#edf1f7] p-3">
+                {metaChanges.map(([k, label]) => (
+                  <p key={k} class="text-xs">
+                    <span class="font-bold text-slate-500">{label}</span>：
+                    <span class="rounded bg-red-50 px-1 text-red-700">{nameOf(k, t[k]) || '（空）'}</span> →{' '}
+                    <span class="rounded bg-[#effcf6] px-1 text-[#17634f]">{nameOf(k, current[k]) || '（空）'}</span>
+                  </p>
+                ))}
+              </div>
+            )}
+            {changedFields.map((k) => (
+              <div key={k}>
+                <p class="text-xs font-bold text-slate-400">欄「{k}」</p>
+                <pre class="mt-1 max-h-80 overflow-auto rounded-xl border border-[#edf1f7] bg-white p-2 font-mono text-xs leading-5 whitespace-pre-wrap">
+                  {lineDiff(t.fields?.[k] ?? '', current.fields?.[k] ?? '').map((d, i) => (
+                    <div key={i} class={cx('px-1', d.type === 'del' && 'bg-red-50 text-red-700', d.type === 'add' && 'bg-[#effcf6] text-[#17634f]', d.type === 'same' && 'text-slate-500')}>
+                      {d.type === 'del' ? '− ' : d.type === 'add' ? '＋ ' : '　 '}{d.text || ' '}
+                    </div>
+                  ))}
+                </pre>
+              </div>
+            ))}
+            <p class="text-xs text-slate-400">「この版を編集画面に読み込む」を押しても、保存するまでは変わりません。書類・告知画像は雛形ファイルそのものは戻らないので、必要なら Google ドキュメント／スライドの「版の履歴」も戻してください。</p>
+          </div>
+        </div>
+      )}
     </Modal>
   )
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { ArrowLeft, Calendar, FileText, History as HistoryIcon, Plus, Save, Scissors } from 'lucide-preact'
-import { COMMON_RANK, DOCUMENT_FORMATS, IMAGE_FORMAT, LOGO_KEY, buildContext, driveIdFrom, countText, extractKeys, formatDate, mockValues, placeholderAt, renderSegments, splitXThread } from '../lib/engine.js'
+import { COMMON_RANK, DOCUMENT_FORMATS, IMAGE_FORMAT, LOGO_KEY, PART_KEY, buildContext, partsMap, unknownParts, driveIdFrom, countText, extractKeys, formatDate, mockValues, placeholderAt, renderSegments, splitXThread } from '../lib/engine.js'
 import { Alert, Badge, Button, DocLink, Eyebrow, Label, Modal, Spinner, activeOnly, card, copyText, cx, formatDateTime, inputCls, useApp } from '../ui/ui.jsx'
 import { lineDiff } from '../lib/diff.js'
 import { Segments } from './Create.jsx'
@@ -80,7 +80,7 @@ export function TemplateEditor({ mode, template, onClose }) {
     }
     return base
   }, [previewSource, data.items, data.orgs, history])
-  const ctx = buildContext({ values: previewValues, items: data.items, settings: data.settings })
+  const ctx = buildContext({ values: previewValues, items: data.items, settings: data.settings, parts: data.parts })
 
   useEffect(() => {
     if (!pendingCaret.current) return
@@ -132,7 +132,9 @@ export function TemplateEditor({ mode, template, onClose }) {
   }
 
   const usedKeys = extractKeys(Object.values(fields))
-  const unknownKeys = usedKeys.filter((k) => !itemsByKey[k] && !settingKeys.includes(k) && k !== LOGO_KEY)
+  const unknownKeys = usedKeys.filter((k) => !itemsByKey[k] && !settingKeys.includes(k) && k !== LOGO_KEY && k !== PART_KEY)
+  const missingParts = unknownParts(Object.values(fields), partsMap(data.parts))
+  const usedParts = [...Object.values(fields).join('\n').matchAll(/\{\{\s*部品\s*:\s*([^{}]+?)\s*\}\}/g)].map((m) => m[1])
 
   const save = async (skipUnknownCheck) => {
     if (!skipUnknownCheck && unknownKeys.length) {
@@ -322,6 +324,17 @@ export function TemplateEditor({ mode, template, onClose }) {
                 ))}
               </div>
             </div>
+            <div class="mt-4">
+              <p class="text-xs font-bold text-slate-400">共通パーツ <span class="font-normal">（署名ブロックなど、よく使う文章のまとまり）</span></p>
+              <div class="mt-2 flex flex-wrap gap-1.5">
+                {activeOnly(data.parts).map((p) => (
+                  <button key={p.name} onClick={() => insert(`{{${PART_KEY}:${p.name}}}`)} title={p.content} class={cx('rounded-lg border px-2.5 py-1 text-xs font-medium', usedParts.includes(p.name) ? 'border-[#9bdcc5] bg-[#effcf6] text-[#17634f]' : 'border-dashed border-[#b9c9e0] bg-white text-slate-600 hover:border-[#3b8dd9]')}>
+                    {p.name}
+                  </button>
+                ))}
+                {!activeOnly(data.parts).length && <span class="text-xs text-slate-400">管理画面の「共通パーツ」で登録すると、ここから差し込めます。</span>}
+              </div>
+            </div>
           </div>
 
           <div class={`${card} space-y-5 p-6`}>
@@ -357,6 +370,7 @@ export function TemplateEditor({ mode, template, onClose }) {
               </div>
             ))}
             {unknownKeys.length > 0 && <Alert>未登録の項目：{unknownKeys.join('、')}（保存時に登録を確認します）</Alert>}
+            {missingParts.length > 0 && <Alert>登録されていない（または無効の）共通パーツ：{missingParts.join('、')}。管理画面の「共通パーツ」で登録してください。</Alert>}
           </div>
         </div>
 

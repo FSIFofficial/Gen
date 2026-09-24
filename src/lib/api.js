@@ -20,9 +20,12 @@ const MESSAGES = {
 
 // init の応答に必ず入っている一覧。欠けていたら GAS 以外の応答（doGet など）が返ってきている
 const INIT_LISTS = ['templates', 'media', 'sets', 'ranks', 'items', 'dateFormats', 'settings', 'orgs', 'orgColumns']
+// あとから足した一覧。古い GAS の応答には無いので空で補う
+const OPTIONAL_LISTS = ['parts']
 
 export function checkInitData(d) {
   if (!d || typeof d !== 'object' || INIT_LISTS.some((k) => !Array.isArray(d[k]))) throw new ApiError('USE_POST')
+  for (const k of OPTIONAL_LISTS) if (!Array.isArray(d[k])) d[k] = []
   return d
 }
 

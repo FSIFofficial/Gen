@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'preact/hooks'
-import { ArrowLeft, ArrowRight, Clipboard, Download, Image as ImageIcon, Printer, Save } from 'lucide-preact'
+import { ArrowLeft, ArrowRight, Clipboard, Download, ExternalLink, Image as ImageIcon, Mail, Printer, Save } from 'lucide-preact'
 import { DOCUMENT_FORMATS, countText, isDocumentTemplate, isImageTemplate, splitXThread } from '../lib/engine.js'
+import { MAILTO_SAFE_LENGTH, mailtoUrl, xIntentUrl } from '../lib/links.js'
+import { applyStyleRule, findStyleIssues, styleRulesFrom } from '../lib/style-check.js'
 import { Alert, Badge, Button, Eyebrow, Spinner, card, copyText, cx, downloadBase64, useApp } from '../ui/ui.jsx'
 
 const fieldCls = 'mt-2 w-full rounded-xl border border-[#dce5f2] p-4 font-normal leading-7 outline-none focus:border-[#3b8dd9] focus:ring-2 focus:ring-blue-100'
@@ -26,6 +28,14 @@ export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBa
   const isImage = isImageTemplate(template)
   const isFile = isDocument || isImage
   const mediaName = (id) => data.media.find((m) => m.id === id)?.name || id
+  const rules = styleRulesFrom(data.settings)
+  // 件名と本文の欄がある媒体（メール）はメールソフトで開ける
+  const isMail = !isFile && out && '件名' in out.fields && '本文' in out.fields
+  const openMail = () => {
+    const url = mailtoUrl({ to: meta.mailTo, subject: out.fields['件名'], body: out.fields['本文'] })
+    if (url.length > MAILTO_SAFE_LENGTH) notify('本文が長いため、メールソフトによっては途中で切れます。切れていたら「コピー」で貼り付けてください', 'error')
+    window.location.href = url
+  }
 
   useEffect(() => {
     if (!dirty) return
@@ -98,6 +108,11 @@ export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBa
                 ) : (
                   <>
                     <Badge tone="green">編集可能</Badge>
+                    {isMail && (
+                      <Button variant="outline" size="sm" icon={Mail} onClick={openMail} title={meta.mailTo ? `宛先：${meta.mailTo}` : '宛先は空欄で開きます（団体のメールアドレスが未入力）'}>
+                        メールソフトで開く
+                      </Button>
+                    )}
                     <Button variant="outline" size="sm" icon={Clipboard} onClick={() => copyText(mediaText(media, out.fields), notify)}>すべてコピー</Button>
                   </>
                 )}
@@ -110,9 +125,9 @@ export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBa
                 <DocumentField key={active} template={template} text={out.fields['本文'] ?? ''} onDownload={(format) => onDownload(active, format)} />
               ) : fieldDefs.map((f) =>
                 f.splitRule === 'スレッド分割' ? (
-                  <ThreadField key={`${active}/${f.fieldKey}`} def={f} value={out.fields[f.fieldKey] ?? ''} onInput={(v) => update(f.fieldKey, v)} numbering={numbering} setNumbering={setNumbering} />
+                  <ThreadField key={`${active}/${f.fieldKey}`} def={f} value={out.fields[f.fieldKey] ?? ''} onInput={(v) => update(f.fieldKey, v)} numbering={numbering} setNumbering={setNumbering} rules={rules} />
                 ) : (
-                  <TextField key={`${active}/${f.fieldKey}`} def={f} value={out.fields[f.fieldKey] ?? ''} onInput={(v) => update(f.fieldKey, v)} />
+                  <TextField key={`${active}/${f.fieldKey}`} def={f} value={out.fields[f.fieldKey] ?? ''} onInput={(v) => update(f.fieldKey, v)} rules={rules} />
                 ),
               )}
             </div>
@@ -206,7 +221,33 @@ function Counter({ count, limit }) {
   return <span class={cx('text-xs', count > limit ? 'font-bold text-red-600' : 'text-slate-400')}>{count} / {limit}</span>
 }
 
-function TextField({ def, value, onInput }) {
+// 表記チェック：共通設定「表記ルール」に当てはまる表記を知らせ、置き換え先があればボタンで直せる
+function StyleIssues({ value, rules, onInput }) {
+  const issues = findStyleIssues(value, rules)
+  if (!issues.length) return null
+  return (
+    <div class="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+      <p class="text-xs font-bold">表記チェック</p>
+      <ul class="mt-1 space-y-1">
+        {issues.map((r) => (
+          <li key={r.from} class="flex flex-wrap items-center gap-2">
+            <span>
+              「{r.from}」が{r.count}か所{r.to !== null && <>あります → 「{r.to}」</>}
+              {r.to === null && 'あります'}
+            </span>
+            {r.to !== null && (
+              <button onClick={() => onInput(applyStyleRule(value, r))} class="rounded-md border border-amber-300 bg-white px-2 py-0.5 text-xs font-semibold hover:bg-amber-100">
+                置き換える
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function TextField({ def, value, onInput, rules = [] }) {
   const { notify } = useApp()
   // 入力中に input と textarea が切り替わるとフォーカスが外れるので、最初の文面で決める
   const [single] = useState(!value.includes('\n') && value.length < 80)
@@ -226,12 +267,13 @@ function TextField({ def, value, onInput }) {
         <textarea value={value} onInput={(e) => onInput(e.currentTarget.value)} class={cx(fieldCls, 'min-h-[320px]')} />
       )}
       {Number(def.limit) > 0 && count > Number(def.limit) && <p class="mt-2 text-sm text-red-600">文字数の上限を超えています。</p>}
+      <StyleIssues value={value} rules={rules} onInput={onInput} />
     </div>
   )
 }
 
 // X：全文を編集し、分割結果を投稿ごとにコピー
-function ThreadField({ def, value, onInput, numbering, setNumbering }) {
+function ThreadField({ def, value, onInput, numbering, setNumbering, rules = [] }) {
   const { notify } = useApp()
   const limit = Number(def.limit) || undefined
   const posts = splitXThread(value, { limit, numbering })
@@ -242,6 +284,7 @@ function ThreadField({ def, value, onInput, numbering, setNumbering }) {
         <span class="text-xs text-slate-400">単独行の「---」で投稿を区切ります</span>
       </div>
       <textarea value={value} onInput={(e) => onInput(e.currentTarget.value)} class={cx(fieldCls, 'min-h-[260px]')} />
+      <StyleIssues value={value} rules={rules} onInput={onInput} />
       <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
         <p class="text-sm font-semibold">スレッド（{posts.length}投稿）</p>
         <label class="flex items-center gap-2 text-sm text-slate-600">
@@ -256,6 +299,11 @@ function ThreadField({ def, value, onInput, numbering, setNumbering }) {
               <span class="text-xs font-bold text-slate-500">投稿 {i + 1}</span>
               <div class="flex items-center gap-3">
                 <Counter count={p.count} limit={limit || 280} />
+                {i === 0 && (
+                  <a href={xIntentUrl(p.text)} target="_blank" rel="noopener noreferrer" class="inline-flex h-8 items-center gap-1.5 rounded-xl border border-[#dce5f2] bg-white px-3 text-xs font-medium hover:border-[#3b8dd9]">
+                    <ExternalLink class="size-3.5" />Xで開く
+                  </a>
+                )}
                 <Button variant="outline" size="sm" icon={Clipboard} onClick={() => copyText(p.text, notify)}>コピー</Button>
               </div>
             </div>
@@ -264,6 +312,7 @@ function ThreadField({ def, value, onInput, numbering, setNumbering }) {
         ))}
       </div>
       <p class="mt-2 text-xs text-slate-400">文字数はX方式（全角2・半角1・URLは23）。上限を超えた投稿は改行・句点の位置で自動分割しています。</p>
+      {posts.length > 1 && <p class="mt-1 text-xs text-slate-400">「Xで開く」は1投稿目を入れた投稿画面を開きます。2投稿目以降は、投稿した1投稿目への返信（スレッド）として「コピー」で貼り付けてください。</p>}
     </div>
   )
 }

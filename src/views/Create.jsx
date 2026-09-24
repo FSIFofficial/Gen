@@ -2,11 +2,36 @@ import { useEffect, useMemo, useState } from 'preact/hooks'
 import { ArrowLeft, ArrowRight, Check, FileText, History as HistoryIcon, Plus, Search, Sparkles } from 'lucide-preact'
 import { COMMON_RANK, LOGO_KEY, buildContext, fileReplacements, formItemsFor, generateOutputs, isFileTemplate, isImageTemplate, pickTemplates, renderSegments, splitXThread } from '../lib/engine.js'
 import { Alert, Badge, Button, Eyebrow, ImageUpload, ItemInput, Label, Spinner, StoredImage, activeOnly, card, cx, downloadBase64, formatDateTime, inputCls, useApp } from '../ui/ui.jsx'
+import { findSimilarOrgs } from '../lib/similar.js'
 import { clearDraft, readAuthor, readDraft, saveAuthor, saveDraft } from '../lib/storage.js'
 import { Output } from './Output.jsx'
 
 const STEPS = ['団体', 'セット・ランク', '案件情報', '出力']
 const TITLES = ['団体を選ぶ', 'セットとランクを選ぶ', '案件情報を入力', '生成結果']
+
+// メールの宛先：入力値のうち、項目キーか表示名に「メール」を含み、メールアドレスの形をしたもの（団体の項目を優先）
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+export function recipientEmail(values, items) {
+  const candidates = items
+    .filter((i) => /メール|mail/i.test(`${i.key}${i.label || ''}`))
+    .sort((a, b) => (a.category === '団体' ? 0 : 1) - (b.category === '団体' ? 0 : 1))
+  for (const i of candidates) {
+    const v = String(values[i.key] ?? '').trim()
+    if (EMAIL_RE.test(v)) return v
+  }
+  return ''
+}
+
+// 団体の二重登録を防ぐ警告（登録は止めない）
+export function SimilarOrgsAlert({ orgs }) {
+  return (
+    <Alert>
+      似た名前の団体がすでに登録されています：
+      {orgs.slice(0, 5).map((o) => `「${o.values['団体名']}」（${o.id}${o.active === false ? '・無効' : ''}）`).join('、')}
+      {orgs.length > 5 && ` ほか${orgs.length - 5}件`}。同じ団体なら新しく追加せず、一覧から選んでください。
+    </Alert>
+  )
+}
 
 // 履歴出力の行 → { [mediaId]: { templateId, fields } }
 function outputsFromRows(rows) {
@@ -104,11 +129,11 @@ export function Create({ seed }) {
   const picked = useMemo(() => pickTemplates(data.templates, setId, rank), [data.templates, setId, rank])
   const availableMedia = data.media.filter((m) => m.active !== false && picked[m.id])
   const selectedMedia = (mediaIds ?? availableMedia.map((m) => m.id)).filter((id) => picked[id])
-  const form = useMemo(() => formItemsFor({ picked, mediaIds: selectedMedia, items: activeOnly(data.items), settings: data.settings }), [picked, selectedMedia.join(), data.items, data.settings])
+  const form = useMemo(() => formItemsFor({ picked, mediaIds: selectedMedia, items: activeOnly(data.items), settings: data.settings, parts: data.parts }), [picked, selectedMedia.join(), data.items, data.settings, data.parts])
 
   const values = { ...orgValues, ...caseValues }
   // {{ロゴ}} は団体マスタのロゴ画像。文面のプレビューでは目印の文字にする
-  const ctx = buildContext({ values: { ...values, [LOGO_KEY]: org?.logoFileId ? '［ロゴ画像］' : '' }, items: data.items, settings: data.settings })
+  const ctx = buildContext({ values: { ...values, [LOGO_KEY]: org?.logoFileId ? '［ロゴ画像］' : '' }, items: data.items, settings: data.settings, parts: data.parts })
   const missingRequired = [...form.orgItems, ...form.caseItems].filter((i) => i.required && !String(values[i.key] ?? '').trim())
   const orgChanged = org && form.orgItems.some((i) => (orgValues[i.key] ?? '') !== (org.values[i.key] ?? ''))
 
@@ -287,7 +312,7 @@ export function Create({ seed }) {
           outputs={outputs}
           original={original}
           mediaIds={Object.keys(outputs)}
-          meta={{ orgName: values['団体名'] || org?.values['団体名'], setName: data.sets.find((s) => s.id === setId)?.name, rank, historyId, author }}
+          meta={{ orgName: values['団体名'] || org?.values['団体名'], setName: data.sets.find((s) => s.id === setId)?.name, rank, historyId, author, mailTo: recipientEmail(values, data.items) }}
           saving={busy === 'save' || busy === 'generate'}
           onSave={saveEdits}
           onBack={() => setStep(3)}
@@ -404,6 +429,7 @@ export function OrgForm({ onSaved }) {
   const [logoFileId, setLogoFileId] = useState('')
   const [busy, setBusy] = useState(false)
   const missing = orgItems.filter((i) => (i.required || i.key === '団体名') && !String(values[i.key] || '').trim())
+  const similar = findSimilarOrgs(values['団体名'], data.orgs)
   const save = async () => {
     setBusy(true)
     try {
@@ -435,6 +461,7 @@ export function OrgForm({ onSaved }) {
         <Label label="ロゴ画像" hint="告知画像の {{ロゴ}} に入ります（PNG・JPEG・GIF、5MBまで）">
           <ImageUpload value={logoFileId} onChange={setLogoFileId} />
         </Label>
+        {similar.length > 0 && <SimilarOrgsAlert orgs={similar} />}
         <Button class="mt-2" onClick={save} disabled={busy || missing.length > 0}>{busy && <Spinner />}保存</Button>
       </div>
     </div>
@@ -557,6 +584,9 @@ function StepDetails({ form, values, org, orgValues, setOrgValues, caseValues, s
           {form.settingKeys.length > 0 && <p class="mt-5 text-xs text-slate-400">共通設定から自動で入る項目：{form.settingKeys.join('、')}</p>}
         </div>
 
+        {form.unknownParts.length > 0 && (
+          <Alert>テンプレートで使っている共通パーツが登録されていません（空欄で出力されます）：{form.unknownParts.join('、')}。管理画面の「共通パーツ」で登録してください。</Alert>
+        )}
         {form.unknownKeys.length > 0 && (
           <Alert>テンプレートに未登録の項目があります（空欄で出力されます）：{form.unknownKeys.join('、')}。管理画面の「入力項目」で登録してください。</Alert>
         )}

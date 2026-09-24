@@ -69,5 +69,9 @@ var ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画�
 var OUTPUT_FORMATS = ['テキスト', 'PDF', 'Docx', '画像'];
 // Google ドキュメントの雛形に差し込んで書き出す形式
 var DOCUMENT_FORMATS = ['PDF', 'Docx'];
+// Google スライドの雛形に差し込んで PNG で書き出す形式
+var IMAGE_FORMAT = '画像';
+// 雛形の図形をロゴ画像に置き換える差し込み（団体マスタのロゴファイルID）
+var LOGO_TOKEN = '{{ロゴ}}';
 var COUNT_MODES = ['通常', 'X方式'];
 var SPLIT_RULES = ['なし', 'スレッド分割'];

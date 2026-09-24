@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks'
-import { ArrowLeft, ArrowRight, Clipboard, Download, Printer, Save } from 'lucide-preact'
-import { DOCUMENT_FORMATS, countText, isDocumentTemplate, splitXThread } from '../lib/engine.js'
-import { Alert, Badge, Button, Eyebrow, Spinner, card, copyText, cx, useApp } from '../ui/ui.jsx'
+import { ArrowLeft, ArrowRight, Clipboard, Download, Image as ImageIcon, Printer, Save } from 'lucide-preact'
+import { DOCUMENT_FORMATS, countText, isDocumentTemplate, isImageTemplate, splitXThread } from '../lib/engine.js'
+import { Alert, Badge, Button, Eyebrow, Spinner, card, copyText, cx, downloadBase64, useApp } from '../ui/ui.jsx'
 
 const fieldCls = 'mt-2 w-full rounded-xl border border-[#dce5f2] p-4 font-normal leading-7 outline-none focus:border-[#3b8dd9] focus:ring-2 focus:ring-blue-100'
 
@@ -23,6 +23,8 @@ export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBa
   const out = outputs[active]
   const template = data.templates.find((t) => t.id === out?.templateId)
   const isDocument = isDocumentTemplate(template)
+  const isImage = isImageTemplate(template)
+  const isFile = isDocument || isImage
   const mediaName = (id) => data.media.find((m) => m.id === id)?.name || id
 
   useEffect(() => {
@@ -88,11 +90,11 @@ export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBa
             <div class="flex items-center justify-between gap-3 border-b border-[#edf1f7] px-6 py-4">
               <div>
                 <span class="text-xs font-bold tracking-widest text-[#1671c9]">{mediaName(active)}</span>
-                <h2 class="mt-1 text-lg font-bold">{isDocument ? '書類' : '公開用の文面'}</h2>
+                <h2 class="mt-1 text-lg font-bold">{isDocument ? '書類' : isImage ? '告知画像' : '公開用の文面'}</h2>
               </div>
               <div class="flex items-center gap-2">
-                {isDocument ? (
-                  <Badge tone="blue">{template.format}</Badge>
+                {isFile ? (
+                  <Badge tone="blue">{isImage ? 'PNG' : template.format}</Badge>
                 ) : (
                   <>
                     <Badge tone="green">編集可能</Badge>
@@ -102,7 +104,9 @@ export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBa
               </div>
             </div>
             <div class="space-y-6 p-6">
-              {isDocument ? (
+              {isImage ? (
+                <ImageField key={active} text={out.fields['本文'] ?? ''} onRender={() => onDownload(active, '画像')} />
+              ) : isDocument ? (
                 <DocumentField key={active} template={template} text={out.fields['本文'] ?? ''} onDownload={(format) => onDownload(active, format)} />
               ) : fieldDefs.map((f) =>
                 f.splitRule === 'スレッド分割' ? (
@@ -146,6 +150,53 @@ function DocumentField({ template, text, onDownload }) {
       <p class="mt-5 text-sm font-semibold">差し込み後の内容（確認用）</p>
       <div class="mt-2 max-h-[560px] overflow-auto rounded-xl border border-[#dce5f2] bg-[#f9fbfe] p-5 text-sm leading-7 whitespace-pre-wrap text-slate-700">{text}</div>
       <p class="mt-2 text-xs text-slate-400">ここでは編集できません。表や書式は雛形のとおりに出力されます。細かな修正は出力したファイルで行ってください。</p>
+    </div>
+  )
+}
+
+// 告知画像：Google スライドの雛形に差し込み、スライドごとの画像を作る
+function ImageField({ text, onRender }) {
+  const [images, setImages] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const run = async () => {
+    setBusy(true)
+    try {
+      const result = await onRender()
+      if (result) setImages(result)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-slate-500">入力した内容とロゴを雛形の Google スライドに差し込み、スライドごとに画像にします。</p>
+        <div class="flex gap-2">
+          {images && images.length > 1 && (
+            <Button variant="outline" icon={Download} onClick={() => images.forEach((img, i) => setTimeout(() => downloadBase64(img), i * 300))}>すべてダウンロード</Button>
+          )}
+          <Button icon={busy ? Spinner : ImageIcon} onClick={run} disabled={busy}>{images ? '作り直す' : '画像を作成'}</Button>
+        </div>
+      </div>
+      {images ? (
+        <div class="mt-5 grid gap-4 md:grid-cols-2">
+          {images.map((img) => (
+            <figure key={img.fileName} class="overflow-hidden rounded-xl border border-[#dce5f2] bg-[#f9fbfe]">
+              <img src={`data:${img.mimeType};base64,${img.base64}`} alt={img.fileName} class="block w-full" />
+              <figcaption class="flex items-center justify-between gap-2 border-t border-[#edf1f7] px-3 py-2 text-xs text-slate-500">
+                <span class="truncate">{img.fileName}</span>
+                <Button variant="outline" size="sm" icon={Download} onClick={() => downloadBase64(img)}>ダウンロード</Button>
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      ) : (
+        <>
+          <p class="mt-5 text-sm font-semibold">差し込み後の文字（確認用）</p>
+          <div class="mt-2 max-h-[420px] overflow-auto rounded-xl border border-[#dce5f2] bg-[#f9fbfe] p-5 text-sm leading-7 whitespace-pre-wrap text-slate-700">{text}</div>
+          <p class="mt-2 text-xs text-slate-400">「---」はスライドの区切りです。レイアウトや画像は雛形のとおりに作られます。</p>
+        </>
+      )}
     </div>
   )
 }

@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks'
 import { Ban, Copy, Lock, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-preact'
-import { COMMON_RANK, formatDate, isDocumentTemplate } from '../lib/engine.js'
-import { Alert, Badge, Button, DocLink, Empty, Eyebrow, ItemInput, Label, Modal, Spinner, card, cx, formatDateTime, inputCls, textareaCls, useApp } from '../ui/ui.jsx'
+import { COMMON_RANK, formatDate, isFileTemplate, isImageTemplate } from '../lib/engine.js'
+import { Alert, Badge, Button, DocLink, Empty, ImageUpload, Eyebrow, ItemInput, Label, Modal, Spinner, card, cx, formatDateTime, inputCls, textareaCls, useApp } from '../ui/ui.jsx'
 import { TemplateEditor } from './TemplateEditor.jsx'
 
 const ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画像']
@@ -105,8 +105,11 @@ function orgDef(data) {
   const cols = data.orgColumns
   return {
     id: 'orgs', label: '団体', key: 'id',
-    columns: [['id', 'ID'], ...cols.slice(0, 3).map((k) => [`values.${k}`, byKey[k]?.label || k]), ['updatedAt', '更新日時']],
-    fields: cols.map((k) => ({ prop: `values.${k}`, label: byKey[k]?.label || k, required: k === '団体名', item: byKey[k] || { key: k, type: '短文' } })),
+    columns: [['id', 'ID'], ...cols.slice(0, 3).map((k) => [`values.${k}`, byKey[k]?.label || k]), ['logo', 'ロゴ'], ['updatedAt', '更新日時']],
+    fields: [
+      ...cols.map((k) => ({ prop: `values.${k}`, label: byKey[k]?.label || k, required: k === '団体名', item: byKey[k] || { key: k, type: '短文' } })),
+      { prop: 'logoFileId', label: 'ロゴ画像', type: 'image', hint: '告知画像の {{ロゴ}} に入ります（PNG・JPEG・GIF、5MBまで）' },
+    ],
   }
 }
 
@@ -168,6 +171,7 @@ function cellText(def, record, prop) {
   if (prop === 'fieldSummary') return record.fields.map((f) => f.label || f.fieldKey).join('・')
   if (prop === 'sample') return formatDate(today(), record.format)
   if (prop === 'updatedAt') return formatDateTime(record.updatedAt)
+  if (prop === 'logo') return record.logoFileId ? '○' : ''
   const v = getProp(record, prop)
   if (v === true) return '○'
   if (v === false) return ''
@@ -284,6 +288,13 @@ function FieldInput({ field, value, onChange, disabled, dateFormats }) {
     return (
       <Label label={field.label} required={field.required}>
         <ItemInput item={field.item} value={value} onInput={onChange} disabled={disabled} />
+      </Label>
+    )
+  }
+  if (field.type === 'image') {
+    return (
+      <Label label={field.label} hint={field.hint}>
+        <ImageUpload value={value || ''} onChange={onChange} disabled={disabled} />
       </Label>
     )
   }
@@ -418,7 +429,7 @@ function TemplateList({ onOpen }) {
                       onEdit={(rec) => onOpen({ mode: 'edit', template: rec })}
                       extra={
                         <>
-                          {isDocumentTemplate(t) && <DocLink fileId={t.fileId} size="sm">ドキュメント</DocLink>}
+                          {isFileTemplate(t) && <DocLink fileId={t.fileId} kind={isImageTemplate(t) ? 'presentation' : 'document'} size="sm">{isImageTemplate(t) ? 'スライド' : 'ドキュメント'}</DocLink>}
                           <Button variant="ghost" size="sm" icon={Copy} onClick={() => onOpen({ mode: 'create', template: t })} title="この内容をコピーして新しいテンプレートを作ります">複製</Button>
                         </>
                       }

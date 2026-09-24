@@ -2,6 +2,8 @@
  * リクエスト処理の本体。GAS 固有の API には触らず、env 経由で DB・設定・ロックを受け取る。
  *   env = { db, docs, props: { userKey, adminPassword }, withLock(fn), now() }
  *   docs は Google ドキュメントの雛形を扱うアダプタ：readText(fileId) / render({ fileId, replacements, format, fileName })
+ *   slides は Google スライドの雛形を扱うアダプタ：readText(fileId) / render({ fileId, replacements, images, fileName })
+ *   files はロゴなどの画像を保存・読み出すアダプタ：saveImage({ fileName, mimeType, base64 }) / readImage(fileId)
  * GAS では Main.gs が SheetDb で env を組み立てる。フロントのモックモードとテストでは MemoryDb を使う。
  */
 
@@ -17,6 +19,8 @@ var ACTIONS = {
   deleteHistory: { fn: actionDeleteHistory_, write: true, admin: true },
   readDocument: { fn: actionReadDocument_ },
   renderDocument: { fn: actionRenderDocument_ },
+  uploadImage: { fn: actionUploadImage_ },
+  readImage: { fn: actionReadImage_ },
 };
 
 function handleRequest(req, env) {
@@ -246,8 +250,7 @@ function validate_(entity, obj, env, table, isCreate) {
       requireText_(obj.rank, 'ランク');
       if (!obj.format) obj.format = 'テキスト';
       oneOf_(obj.format, OUTPUT_FORMATS, '出力形式');
-      if (obj.format === '画像') throw appError_('VALIDATION', '画像の出力は今後対応予定です');
-      if (isDocumentFormat_(obj.format)) requireText_(obj.fileId, '雛形ファイルID');
+      if (isFileFormat_(obj.format)) requireText_(obj.fileId, '雛形ファイルID');
       if (!findRecord_(loadTable_(env, 'sets'), obj.setId)) throw appError_('VALIDATION', 'セットが見つかりません');
       if (!findRecord_(loadTable_(env, 'media'), obj.mediaId)) throw appError_('VALIDATION', '媒体が見つかりません');
       if (obj.rank !== COMMON_RANK && !findRecord_(loadTable_(env, 'ranks'), obj.rank)) throw appError_('VALIDATION', 'ランクが見つかりません');
@@ -356,8 +359,8 @@ function actionCreate_(payload, env) {
   var s = table.schema;
   var obj = pickData_(entity, payload.data || {});
   validate_(entity, obj, env, table, true);
-  var children = entity === 'templates' && isDocumentFormat_(obj.format)
-    ? documentChildren_(env, obj.fileId)
+  var children = entity === 'templates' && isFileFormat_(obj.format)
+    ? fileChildren_(env, obj.format, obj.fileId)
     : CREATABLE[entity] && payload.children ? childRows_(entity, payload.children) : null;
   if (s.idPrefix) obj.id = nextId_(s.idPrefix, table.records);
   if (hasCol_(s, 'active')) obj.active = true;
@@ -383,8 +386,8 @@ function actionUpdate_(payload, env) {
     else obj[k] = data[k];
   });
   validate_(entity, obj, env, table, false);
-  var children = entity === 'templates' && isDocumentFormat_(obj.format)
-    ? documentChildren_(env, obj.fileId)
+  var children = entity === 'templates' && isFileFormat_(obj.format)
+    ? fileChildren_(env, obj.format, obj.fileId)
     : CREATABLE[entity] && payload.children ? childRows_(entity, payload.children) : null;
   if (hasCol_(s, 'updatedAt')) obj.updatedAt = env.now();
   if (entity === 'items' && obj.category === '団体') ensureOrgColumn_(env, obj.key);
@@ -461,42 +464,80 @@ function actionDeleteHistory_(payload, env) {
   return { id: rec.obj.id };
 }
 
-// ---------- 書類（PDF / Docx） ----------
+// ---------- 書類（PDF / Docx）と告知画像 ----------
 
 function isDocumentFormat_(format) {
   return DOCUMENT_FORMATS.indexOf(format) >= 0;
 }
 
-function docs_(env) {
-  if (!env.docs) throw appError_('DOCS_UNAVAILABLE', '書類の出力に対応していない環境です');
-  return env.docs;
+// 雛形ファイル（Google ドキュメント / スライド）から作る出力形式
+function isFileFormat_(format) {
+  return isDocumentFormat_(format) || format === IMAGE_FORMAT;
 }
 
-// 雛形ドキュメントの本文を読んで「本文」欄に写す。画面はこれを使って入力フォームとプレビューを作る
-function documentChildren_(env, fileId) {
-  return [{ fieldKey: '本文', content: docs_(env).readText(fileId) }];
+function adapter_(env, name, label) {
+  if (!env[name]) throw appError_('DOCS_UNAVAILABLE', label + 'に対応していない環境です');
+  return env[name];
+}
+
+function templateAdapter_(env, format) {
+  return format === IMAGE_FORMAT ? adapter_(env, 'slides', '告知画像の出力') : adapter_(env, 'docs', '書類の出力');
+}
+
+// 雛形の本文を読んで「本文」欄に写す。画面はこれを使って入力フォームとプレビューを作る
+function fileChildren_(env, format, fileId) {
+  return [{ fieldKey: '本文', content: templateAdapter_(env, format).readText(fileId) }];
+}
+
+// 画面からの { '{{団体名}}': '...' } のうち、差し込みの形をしたものだけを受け付ける
+function tokenMap_(src) {
+  var out = {};
+  if (!src || typeof src !== 'object') return out;
+  Object.keys(src).forEach(function (k) {
+    if (/^\{\{[^{}]+\}\}$/.test(k)) out[k] = String(src[k] == null ? '' : src[k]);
+  });
+  return out;
 }
 
 function actionReadDocument_(payload, env) {
   requireText_(payload.fileId, '雛形ファイルID');
-  return { text: docs_(env).readText(str_(payload.fileId)) };
+  return { text: templateAdapter_(env, payload.format).readText(str_(payload.fileId)) };
 }
 
 // replacements は画面側で解決済みの { '{{団体名}}': 'サンプル団体', '{{締結日:M/D}}': '9/24', ... }
+// 告知画像では images に { '{{ロゴ}}': 画像のファイルID } を渡すと、その差し込みを書いた図形が画像に置き換わる
 function actionRenderDocument_(payload, env) {
   var rec = findRecord_(loadTable_(env, 'templates'), payload.templateId);
   if (!rec) throw appError_('NOT_FOUND', 'テンプレートが見つかりません');
   var t = rec.obj;
-  if (!isDocumentFormat_(t.format) || !t.fileId) throw appError_('VALIDATION', 'このテンプレートは書類の出力に対応していません');
+  if (!isFileFormat_(t.format) || !t.fileId) throw appError_('VALIDATION', 'このテンプレートはファイルの出力に対応していません');
+  var fileName = str_(payload.fileName).replace(/[\\/:*?"<>|]/g, '_') || t.name;
+  var replacements = tokenMap_(payload.replacements);
+  if (t.format === IMAGE_FORMAT) {
+    return adapter_(env, 'slides', '告知画像の出力').render({ fileId: t.fileId, replacements: replacements, images: tokenMap_(payload.images), fileName: fileName });
+  }
   var format = payload.format || t.format;
   oneOf_(format, DOCUMENT_FORMATS, '出力形式');
-  var replacements = {};
-  var src = payload.replacements && typeof payload.replacements === 'object' ? payload.replacements : {};
-  Object.keys(src).forEach(function (k) {
-    if (/^\{\{[^{}]+\}\}$/.test(k)) replacements[k] = String(src[k] == null ? '' : src[k]);
-  });
-  var fileName = str_(payload.fileName).replace(/[\\/:*?"<>|]/g, '_') || t.name;
-  return docs_(env).render({ fileId: t.fileId, replacements: replacements, format: format, fileName: fileName });
+  return adapter_(env, 'docs', '書類の出力').render({ fileId: t.fileId, replacements: replacements, format: format, fileName: fileName });
+}
+
+var IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/gif'];
+var MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+// ロゴなどの画像を LOGO_FOLDER_ID のフォルダに保存し、ファイルIDを返す（追加なので利用者も可）
+function actionUploadImage_(payload, env) {
+  oneOf_(str_(payload.mimeType), IMAGE_MIME_TYPES, '画像の形式');
+  var base64 = str_(payload.base64);
+  requireText_(base64, '画像');
+  if (base64.length * 3 / 4 > MAX_IMAGE_BYTES) throw appError_('VALIDATION', '画像は5MB以下にしてください');
+  var fileName = str_(payload.fileName).replace(/[\\/:*?"<>|]/g, '_') || 'image';
+  return { fileId: adapter_(env, 'files', '画像の保存').saveImage({ fileName: fileName, mimeType: str_(payload.mimeType), base64: base64 }) };
+}
+
+// 保存した画像を画面に表示するために読み出す（LOGO_FOLDER_ID 内のファイルだけ）
+function actionReadImage_(payload, env) {
+  requireText_(payload.fileId, '画像のファイルID');
+  return adapter_(env, 'files', '画像の読み出し').readImage(str_(payload.fileId));
 }
 
 // ---------- 初期化 ----------

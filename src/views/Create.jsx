@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks'
 import { ArrowLeft, ArrowRight, Check, FileText, Plus, Search, Sparkles } from 'lucide-preact'
-import { COMMON_RANK, buildContext, documentReplacements, formItemsFor, generateOutputs, isDocumentTemplate, pickTemplates, renderSegments, splitXThread } from '../lib/engine.js'
-import { Alert, Badge, Button, Eyebrow, ItemInput, Label, Spinner, activeOnly, card, cx, downloadBase64, inputCls, useApp } from '../ui/ui.jsx'
+import { COMMON_RANK, LOGO_KEY, buildContext, fileReplacements, formItemsFor, generateOutputs, isFileTemplate, isImageTemplate, pickTemplates, renderSegments, splitXThread } from '../lib/engine.js'
+import { Alert, Badge, Button, Eyebrow, ImageUpload, ItemInput, Label, Spinner, StoredImage, activeOnly, card, cx, downloadBase64, inputCls, useApp } from '../ui/ui.jsx'
 import { Output } from './Output.jsx'
 
 const STEPS = ['団体', 'セット・ランク', '案件情報', '出力']
@@ -97,7 +97,8 @@ export function Create({ seed }) {
   const form = useMemo(() => formItemsFor({ picked, mediaIds: selectedMedia, items: activeOnly(data.items), settings: data.settings }), [picked, selectedMedia.join(), data.items, data.settings])
 
   const values = { ...orgValues, ...caseValues }
-  const ctx = buildContext({ values, items: data.items, settings: data.settings })
+  // {{ロゴ}} は団体マスタのロゴ画像。文面のプレビューでは目印の文字にする
+  const ctx = buildContext({ values: { ...values, [LOGO_KEY]: org?.logoFileId ? '［ロゴ画像］' : '' }, items: data.items, settings: data.settings })
   const missingRequired = [...form.orgItems, ...form.caseItems].filter((i) => i.required && !String(values[i.key] ?? '').trim())
   const orgChanged = org && form.orgItems.some((i) => (orgValues[i.key] ?? '') !== (org.values[i.key] ?? ''))
 
@@ -185,19 +186,21 @@ export function Create({ seed }) {
     }
   }
 
-  // 書類：雛形の差し込みを画面側で解決して GAS に渡し、書き出したファイルを受け取る
-  const downloadDocument = async (mediaId, format) => {
+  // 書類・告知画像：雛形の差し込みを画面側で解決して GAS に渡し、書き出したファイルを受け取る。
+  // 書類はそのままダウンロードし、告知画像は画面で確認できるように画像の一覧を返す
+  const renderFile = async (mediaId, format) => {
     const t = data.templates.find((x) => x.id === outputs[mediaId]?.templateId)
     if (!t) return notify('テンプレートが見つかりません', 'error')
     const orgName = values['団体名'] || org?.values['団体名'] || ''
+    const image = isImageTemplate(t)
     try {
-      const file = await api.call('renderDocument', {
-        templateId: t.id,
-        format,
-        replacements: documentReplacements(t.fields['本文'] ?? '', ctx),
-        fileName: [t.name, orgName].filter(Boolean).join('_'),
-      })
-      downloadBase64(file)
+      const { replacements, images } = fileReplacements(t.fields['本文'] ?? '', ctx, { logoFileId: org?.logoFileId, withImages: image })
+      const res = await api.call('renderDocument', { templateId: t.id, format, replacements, images, fileName: [t.name, orgName].filter(Boolean).join('_') })
+      if (image) {
+        notify('告知画像を作成しました')
+        return res.images
+      }
+      downloadBase64(res)
       notify(`${format}を出力しました`)
     } catch (e) {
       notify(e.message, 'error')
@@ -276,7 +279,7 @@ export function Create({ seed }) {
           onSave={saveEdits}
           onBack={() => setStep(3)}
           onChange={setOutputs}
-          onDownload={downloadDocument}
+          onDownload={renderFile}
         />
       )}
 
@@ -360,12 +363,13 @@ export function OrgForm({ onSaved }) {
   const { api, data, reload, notify } = useApp()
   const orgItems = activeOnly(data.items).filter((i) => i.category === '団体')
   const [values, setValues] = useState(() => Object.fromEntries(orgItems.map((i) => [i.key, i.defaultValue || ''])))
+  const [logoFileId, setLogoFileId] = useState('')
   const [busy, setBusy] = useState(false)
   const missing = orgItems.filter((i) => (i.required || i.key === '団体名') && !String(values[i.key] || '').trim())
   const save = async () => {
     setBusy(true)
     try {
-      const { key } = await api.call('create', { entity: 'orgs', data: { values } })
+      const { key } = await api.call('create', { entity: 'orgs', data: { values, logoFileId } })
       const d = await reload()
       notify('団体を追加しました')
       onSaved(d.orgs.find((o) => o.id === key))
@@ -390,6 +394,9 @@ export function OrgForm({ onSaved }) {
             <ItemInput item={i} value={values[i.key]} onInput={(v) => setValues({ ...values, [i.key]: v })} />
           </Label>
         ))}
+        <Label label="ロゴ画像" hint="告知画像の {{ロゴ}} に入ります（PNG・JPEG・GIF、5MBまで）">
+          <ImageUpload value={logoFileId} onChange={setLogoFileId} />
+        </Label>
         <Button class="mt-2" onClick={save} disabled={busy || missing.length > 0}>{busy && <Spinner />}保存</Button>
       </div>
     </div>
@@ -433,7 +440,7 @@ function StepSet({ setId, rank, picked, availableMedia, selected, onSet, onRank,
                   <span class="block font-medium">{m.name}</span>
                   <span class="block text-xs text-slate-500">{t.name}</span>
                 </span>
-                {isDocumentTemplate(t) && <Badge tone="green">{t.format}</Badge>}
+                {isFileTemplate(t) && <Badge tone="green">{t.format}</Badge>}
                 <Badge tone={t.rank === COMMON_RANK ? 'gray' : 'blue'}>{t.rank === COMMON_RANK ? '共通' : `${t.rank}専用`}</Badge>
               </label>
             )
@@ -474,6 +481,18 @@ function StepDetails({ form, values, org, orgValues, setOrgValues, caseValues, s
                 </Label>
               ))}
             </div>
+            {form.usesLogo && (
+              <div class="mt-5 flex items-center gap-3 rounded-xl bg-[#f6f8fc] p-3 text-sm">
+                {org?.logoFileId ? (
+                  <>
+                    <StoredImage fileId={org.logoFileId} class="size-12" />
+                    <span>告知画像にはこのロゴが入ります。</span>
+                  </>
+                ) : (
+                  <span class="text-amber-800">この団体はロゴ画像が未登録です。告知画像のロゴの位置は空になります（管理画面の団体マスタで登録できます）。</span>
+                )}
+              </div>
+            )}
             {orgChanged && (
               <label class="mt-5 flex items-center gap-2 rounded-xl bg-[#f6f8fc] p-3 text-sm">
                 <input type="checkbox" class="size-4 accent-[#1261af]" checked={updateMaster} onChange={(e) => setUpdateMaster(e.currentTarget.checked)} />

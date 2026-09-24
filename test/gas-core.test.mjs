@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { MemoryDb, createMockDocs, loadGasCore } from '../src/lib/memory-db.js'
-import { buildContext, documentReplacements, generateOutputs, pickTemplates } from '../src/lib/engine.js'
+import { MemoryDb, createMockDocs, createMockFiles, createMockSlides, loadGasCore } from '../src/lib/memory-db.js'
+import { buildContext, documentReplacements, fileReplacements, formItemsFor, generateOutputs, pickTemplates } from '../src/lib/engine.js'
 
 const read = (f) => readFileSync(new URL(`../gas/${f}`, import.meta.url), 'utf8')
 const gas = loadGasCore({ schema: read('Schema.gs'), mockData: read('MockData.gs'), core: read('Core.gs') })
@@ -11,9 +11,12 @@ function setup() {
   const db = new MemoryDb()
   gas.seedTables(db, new Date('2026-09-24T00:00:00Z'))
   let t = 0
+  const files = createMockFiles()
   const env = {
     db,
     docs: createMockDocs({ ...gas.MOCK_DOCUMENTS, OTHER_DOC: '別の雛形 {{団体名}}' }),
+    slides: createMockSlides(gas.MOCK_DOCUMENTS, files),
+    files,
     props: { userKey: 'user-key', adminPassword: 'admin-pass' },
     withLock: (fn) => fn(),
     now: () => new Date(Date.UTC(2026, 8, 24, 0, 0, t++)),
@@ -46,8 +49,8 @@ test('init：モックデータが一括で返り、生成まで通る', () => {
   const res = call('init')
   assert.equal(res.ok, true)
   const d = res.data
-  assert.equal(d.media.length, 6)
-  assert.equal(d.templates.length, 8)
+  assert.equal(d.media.length, 7)
+  assert.equal(d.templates.length, 9)
   assert.equal(d.media.find((m) => m.id === 'M002').fields[0].countMode, 'X方式')
   assert.equal(d.media.find((m) => m.id === 'M002').fields[0].limit, 280)
   assert.equal(d.orgs[0].values['団体名'], 'サンプル団体')
@@ -69,8 +72,8 @@ test('create：利用者が追加でき、IDが採番される', () => {
   const r = call('create', { entity: 'sets', data: { name: '新セット', order: 2 } })
   assert.deepEqual(r, { ok: true, data: { key: 'S002' } })
   const t = call('create', { entity: 'templates', data: { name: '新テンプレ', setId: 'S002', mediaId: 'M001', rank: '共通' }, children: { fields: { 件名: 'a', 本文: 'b' } } })
-  assert.equal(t.data.key, 'T009')
-  const tpl = call('init').data.templates.find((x) => x.id === 'T009')
+  assert.equal(t.data.key, 'T010')
+  const tpl = call('init').data.templates.find((x) => x.id === 'T010')
   assert.deepEqual(tpl.fields, { 件名: 'a', 本文: 'b' })
   assert.equal(tpl.format, 'テキスト')
 })
@@ -163,7 +166,6 @@ test('書類テンプレ：雛形の本文を読み込み、差し込んで出�
   const { call } = setup()
   assert.equal(call('create', { entity: 'templates', data: { name: '書類', setId: 'S001', mediaId: 'M006', rank: '共通', format: 'PDF' } }).error, 'VALIDATION')
   assert.equal(call('create', { entity: 'templates', data: { name: '書類', setId: 'S001', mediaId: 'M006', rank: '共通', format: 'PDF', fileId: 'NOPE' } }).error, 'DOC_NOT_FOUND')
-  assert.equal(call('create', { entity: 'templates', data: { name: '画像', setId: 'S001', mediaId: 'M006', rank: '共通', format: '画像' } }).error, 'VALIDATION')
 
   // 画面から送られた欄は無視し、雛形の本文を「本文」欄に写す
   const created = call('create', { entity: 'templates', data: { name: '書類', setId: 'S001', mediaId: 'M006', rank: 'ゴールド', format: 'Docx', fileId: 'OTHER_DOC' }, children: { fields: { 本文: '無視される' } } })
@@ -185,4 +187,40 @@ test('書類テンプレ：雛形の本文を読み込み、差し込んで出�
   assert.ok(!text.includes('{{'))
   assert.equal(call('renderDocument', { templateId: 'T001' }).error, 'VALIDATION')
   assert.equal(call('renderDocument', { templateId: 'T008', format: 'Excel' }).error, 'VALIDATION')
+})
+
+test('告知画像：ロゴをアップロードし、スライドに差し込んで画像にする', () => {
+  const { call } = setup()
+  assert.equal(call('create', { entity: 'templates', data: { name: '画像', setId: 'S001', mediaId: 'M007', rank: '共通', format: '画像' } }).error, 'VALIDATION')
+  assert.equal(call('uploadImage', { fileName: 'a.svg', mimeType: 'image/svg+xml', base64: 'AAAA' }).error, 'VALIDATION')
+  assert.equal(call('uploadImage', { fileName: 'a.png', mimeType: 'image/png', base64: 'A'.repeat(8 * 1024 * 1024) }).error, 'VALIDATION')
+  const { fileId } = call('uploadImage', { fileName: 'logo.png', mimeType: 'image/png', base64: 'iVBORw0KGgo=' }).data
+  assert.deepEqual(call('readImage', { fileId }).data, { mimeType: 'image/png', base64: 'iVBORw0KGgo=' })
+  assert.equal(call('readImage', { fileId: 'NOPE' }).error, 'IMAGE_NOT_FOUND')
+
+  // 団体にロゴを登録（新規追加なので利用者でよい）
+  const org = call('create', { entity: 'orgs', data: { values: { 団体名: 'ロゴ団体' }, logoFileId: fileId } }).data.key
+  const d = call('init').data
+  assert.equal(d.orgs.find((o) => o.id === org).logoFileId, fileId)
+  assert.equal(call('readDocument', { fileId: 'SAMPLE_SLIDES', format: '画像' }).data.text.split('\n')[0], '{{ロゴ}}')
+
+  const t = d.templates.find((x) => x.id === 'T009')
+  const picked = pickTemplates(d.templates, 'S001', 'シルバー')
+  const form = formItemsFor({ picked, mediaIds: ['M007'], items: d.items, settings: d.settings })
+  assert.equal(form.usesLogo, true)
+  assert.deepEqual(form.unknownKeys, [])
+  const ctx = buildContext({ values: { 団体名: 'ロゴ団体', 締結日: '2026-09-24' }, items: d.items, settings: d.settings })
+  const { replacements, images } = fileReplacements(t.fields['本文'], ctx, { logoFileId: fileId, withImages: true })
+  assert.deepEqual(images, { '{{ロゴ}}': fileId })
+  assert.equal(replacements['{{締結日:YYYY.MM.DD}}'], '2026.09.24')
+  assert.ok(!('{{ロゴ}}' in replacements))
+
+  const out = call('renderDocument', { templateId: 'T009', replacements, images, fileName: '締結告知' }).data
+  assert.deepEqual(out.images.map((i) => i.fileName), ['締結告知_1.svg', '締結告知_2.svg'])
+  const svg = Buffer.from(out.images[0].base64, 'base64').toString('utf8')
+  assert.match(svg, /ロゴ団体/)
+  assert.match(svg, /2026\.09\.24/)
+  assert.match(svg, /data:image\/png;base64,iVBORw0KGgo=/)
+  // 画像として使えるのは保存済みの画像だけ
+  assert.equal(call('renderDocument', { templateId: 'T009', replacements, images: { '{{ロゴ}}': 'OTHER_FILE' } }).error, 'IMAGE_NOT_FOUND')
 })

@@ -21,7 +21,7 @@ function setup() {
     withLock: (fn) => fn(),
     now: () => new Date(Date.UTC(2026, 8, 24, 0, 0, t++)),
   }
-  const call = (action, payload = {}, adminPass) => gas.handleRequest({ action, key: 'user-key', adminPass, payload }, env)
+  const call = (action, payload = {}, adminPass, actor) => gas.handleRequest({ action, key: 'user-key', adminPass, actor, payload }, env)
   return { db, env, call }
 }
 
@@ -223,4 +223,73 @@ test('告知画像：ロゴをアップロードし、スライドに差し込�
   assert.match(svg, /data:image\/png;base64,iVBORw0KGgo=/)
   // 画像として使えるのは保存済みの画像だけ
   assert.equal(call('renderDocument', { templateId: 'T009', replacements, images: { '{{ロゴ}}': 'OTHER_FILE' } }).error, 'IMAGE_NOT_FOUND')
+})
+
+test('操作ログ：追加・編集・無効化・削除を記録し、新しい順に返す', () => {
+  const { call, db } = setup()
+  assert.deepEqual(call('listLogs').data, [])
+  call('create', { entity: 'sets', data: { name: '新セット' } }, undefined, '山田')
+  call('update', { entity: 'orgs', key: 'O001', data: { values: { 団体紹介: '改行\nあり' } } }, 'admin-pass', '管理 太郎')
+  call('update', { entity: 'templates', key: 'T001', data: { name: '改名' }, children: { fields: { 件名: '新しい件名', 本文: 'b' } } }, 'admin-pass')
+  call('deactivate', { entity: 'sets', key: 'S002' }, 'admin-pass', '山田')
+  call('saveHistory', { history: { orgName: 'サンプル団体' }, outputs: [] })
+  call('deleteHistory', { id: 'H001' }, 'admin-pass', '山田')
+  const logs = call('listLogs').data
+  assert.deepEqual(logs.map((l) => [l.action, l.entity, l.key]), [
+    ['削除', '履歴', 'H001'],
+    ['無効化', 'セット', 'S002'],
+    ['編集', 'テンプレート', 'T001'],
+    ['編集', '団体', 'O001'],
+    ['追加', 'セット', 'S002'],
+  ])
+  assert.equal(logs[4].actor, '山田')
+  assert.equal(logs[4].role, '利用者')
+  assert.equal(logs[4].detail, '新セット')
+  assert.equal(logs[3].role, '管理者')
+  assert.match(logs[3].detail, /^サンプル団体：団体紹介：「.*」→「改行⏎あり」$/)
+  assert.equal(logs[2].actor, '（名前未入力）')
+  assert.match(logs[2].detail, /テンプレ名：「.+」→「改名」/)
+  assert.match(logs[2].detail, /欄「件名」を変更/)
+  assert.match(logs[2].detail, /欄「本文」を変更/)
+  assert.match(logs[0].at, /^2026-09-24T/)
+  assert.equal(call('listLogs', { limit: 2 }).data.length, 2)
+  // 失敗した操作は記録しない
+  call('create', { entity: 'ranks', data: { name: 'ゴールド' } })
+  assert.equal(call('listLogs').data.length, 5)
+  assert.equal(db.readTable('操作ログ').rows.length, 5)
+})
+
+test('操作ログ：シートが無い既存環境でも自動で作る', () => {
+  const { call, db } = setup()
+  delete db.sheets['操作ログ']
+  assert.deepEqual(call('listLogs').data, [])
+  assert.equal(call('create', { entity: 'sets', data: { name: 'x' } }).ok, true)
+  assert.deepEqual(db.readTable('操作ログ').headers, ['日時', '操作者', '権限', '操作', '種類', '対象', '内容'])
+  assert.equal(call('listLogs').data.length, 1)
+})
+
+test('団体の一括登録：空・重複は飛ばし、まとめて追加する', () => {
+  const { call } = setup()
+  const res = call('bulkCreate', {
+    entity: 'orgs',
+    rows: [
+      { values: { 団体名: ' 一括A ', 団体紹介: '紹介A', 知らない列: 'x' } },
+      { values: { 団体名: '' } },
+      { values: { 団体名: 'サンプル団体' } },
+      { values: { 団体名: '一括B' } },
+      { values: { 団体名: '一括A' } },
+    ],
+  }, undefined, '山田')
+  assert.equal(res.ok, true)
+  assert.deepEqual(res.data.created, [{ id: 'O003', name: '一括A' }, { id: 'O004', name: '一括B' }])
+  assert.deepEqual(res.data.skipped.map((s) => [s.row, s.reason]), [[2, '団体名が空です'], [3, 'すでに登録されています'], [5, 'すでに登録されています']])
+  assert.deepEqual(res.data.ignoredColumns, ['知らない列'])
+  const orgs = call('init').data.orgs
+  const a = orgs.find((o) => o.id === 'O003')
+  assert.equal(a.values['団体名'], '一括A')
+  assert.equal(a.values['団体紹介'], '紹介A')
+  assert.equal(a.active, true)
+  assert.deepEqual(call('listLogs').data.map((l) => [l.action, l.key, l.detail]), [['一括追加', 'O004', '一括B'], ['一括追加', 'O003', '一括A']])
+  assert.equal(call('bulkCreate', { entity: 'sets', rows: [{}] }).error, 'BAD_REQUEST')
+  assert.equal(call('bulkCreate', { entity: 'orgs', rows: [] }).error, 'VALIDATION')
 })

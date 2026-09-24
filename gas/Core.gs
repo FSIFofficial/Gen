@@ -13,6 +13,7 @@ var ACTIONS = {
   getHistory: { fn: actionGetHistory_ },
   saveHistory: { fn: actionSaveHistory_, write: true },
   create: { fn: actionCreate_, write: true },
+  bulkCreate: { fn: actionBulkCreate_, write: true },
   verifyAdmin: { fn: actionVerifyAdmin_ },
   update: { fn: actionUpdate_, write: true, admin: true },
   deactivate: { fn: actionDeactivate_, write: true, admin: true },
@@ -21,6 +22,7 @@ var ACTIONS = {
   renderDocument: { fn: actionRenderDocument_ },
   uploadImage: { fn: actionUploadImage_ },
   readImage: { fn: actionReadImage_ },
+  listLogs: { fn: actionListLogs_ },
 };
 
 function handleRequest(req, env) {
@@ -352,7 +354,7 @@ function actionInit_(payload, env) {
   };
 }
 
-function actionCreate_(payload, env) {
+function actionCreate_(payload, env, req) {
   var entity = payload.entity;
   if (!Object.prototype.hasOwnProperty.call(CREATABLE, entity)) throw appError_('BAD_REQUEST', '追加できない種類です: ' + entity);
   var table = loadTable_(env, entity);
@@ -368,10 +370,11 @@ function actionCreate_(payload, env) {
   if (entity === 'items' && obj.category === '団体') ensureOrgColumn_(env, obj.key);
   env.db.appendRows(s.sheet, [toRow_(table, obj)]);
   if (children) replaceChildren_(env, CREATABLE[entity], obj[s.key], children);
+  writeLogs_(env, req, [{ action: '追加', entity: entity, key: obj[s.key], detail: recordName_(entity, obj) }]);
   return { key: obj[s.key] };
 }
 
-function actionUpdate_(payload, env) {
+function actionUpdate_(payload, env, req) {
   var entity = payload.entity;
   if (!Object.prototype.hasOwnProperty.call(CREATABLE, entity)) throw appError_('BAD_REQUEST', '更新できない種類です: ' + entity);
   var table = loadTable_(env, entity);
@@ -389,14 +392,17 @@ function actionUpdate_(payload, env) {
   var children = entity === 'templates' && isFileFormat_(obj.format)
     ? fileChildren_(env, obj.format, obj.fileId)
     : CREATABLE[entity] && payload.children ? childRows_(entity, payload.children) : null;
+  var changes = diffRecord_(s, rec.obj, obj);
+  if (children) changes = changes.concat(diffChildren_(env, CREATABLE[entity], obj[s.key], children));
   if (hasCol_(s, 'updatedAt')) obj.updatedAt = env.now();
   if (entity === 'items' && obj.category === '団体') ensureOrgColumn_(env, obj.key);
   env.db.updateRow(s.sheet, rec.index, toRow_(table, obj));
   if (children) replaceChildren_(env, CREATABLE[entity], obj[s.key], children);
+  writeLogs_(env, req, [{ action: '編集', entity: entity, key: obj[s.key], detail: recordName_(entity, obj) + '：' + (changes.length ? changes.join(' / ') : '変更なし') }]);
   return { key: obj[s.key] };
 }
 
-function actionDeactivate_(payload, env) {
+function actionDeactivate_(payload, env, req) {
   var entity = payload.entity;
   if (!Object.prototype.hasOwnProperty.call(CREATABLE, entity) || !hasCol_(SCHEMA[entity], 'active')) throw appError_('BAD_REQUEST', '無効化できない種類です: ' + entity);
   var table = loadTable_(env, entity);
@@ -406,6 +412,7 @@ function actionDeactivate_(payload, env) {
   obj.active = payload.active === true; // 既定は無効化。active: true を渡すと再度有効にする
   if (hasCol_(table.schema, 'updatedAt')) obj.updatedAt = env.now();
   env.db.updateRow(table.schema.sheet, rec.index, toRow_(table, obj));
+  writeLogs_(env, req, [{ action: obj.active ? '有効化' : '無効化', entity: entity, key: payload.key, detail: recordName_(entity, obj) }]);
   return { key: payload.key, active: obj.active };
 }
 
@@ -455,13 +462,157 @@ function actionSaveHistory_(payload, env) {
   return { id: obj.id, createdAt: isDate_(obj.createdAt) ? obj.createdAt.toISOString() : obj.createdAt };
 }
 
-function actionDeleteHistory_(payload, env) {
+function actionDeleteHistory_(payload, env, req) {
   var table = loadTable_(env, 'history');
   var rec = findRecord_(table, payload.id);
   if (!rec) throw appError_('NOT_FOUND', '履歴が見つかりません');
   replaceChildren_(env, 'historyOutputs', rec.obj.id, []);
   env.db.deleteRows(SCHEMA.history.sheet, [rec.index]);
+  writeLogs_(env, req, [{ action: '削除', entity: 'history', key: rec.obj.id, detail: [rec.obj.orgName, rec.obj.author, rec.obj.createdAt].filter(String).join(' / ') }]);
   return { id: rec.obj.id };
+}
+
+var MAX_BULK_ROWS = 500;
+
+// 団体の一括登録（追加なので利用者も可）。rows は [{ values: { 団体名: '...', ... } }]。
+// 団体名が空の行、すでに登録済み（無効のものを含む）・同じ一括登録内で重複する団体名の行は飛ばす
+function actionBulkCreate_(payload, env, req) {
+  if (payload.entity !== 'orgs') throw appError_('BAD_REQUEST', '一括登録できるのは団体だけです');
+  var rows = Array.isArray(payload.rows) ? payload.rows : [];
+  if (!rows.length) throw appError_('VALIDATION', '登録する行がありません');
+  if (rows.length > MAX_BULK_ROWS) throw appError_('VALIDATION', '一度に登録できるのは' + MAX_BULK_ROWS + '件までです');
+  var table = loadTable_(env, 'orgs');
+  var names = {};
+  table.records.forEach(function (r) { names[str_(r.obj.values['団体名'])] = true; });
+  var records = table.records.slice();
+  var created = [];
+  var skipped = [];
+  var out = [];
+  rows.forEach(function (row, i) {
+    var obj = pickData_('orgs', { values: (row && row.values) || {} });
+    obj.values = obj.values || {};
+    Object.keys(obj.values).forEach(function (k) { obj.values[k] = obj.values[k].trim(); });
+    var name = obj.values['団体名'] || '';
+    if (!name) return skipped.push({ row: i + 1, name: '', reason: '団体名が空です' });
+    if (names[name]) return skipped.push({ row: i + 1, name: name, reason: 'すでに登録されています' });
+    names[name] = true;
+    obj.id = nextId_('O', records);
+    obj.logoFileId = '';
+    obj.active = true;
+    obj.updatedAt = env.now();
+    records.push({ obj: obj });
+    out.push(toRow_(table, obj));
+    created.push({ id: obj.id, name: name });
+  });
+  if (out.length) env.db.appendRows(SCHEMA.orgs.sheet, out);
+  writeLogs_(env, req, created.map(function (c) { return { action: '一括追加', entity: 'orgs', key: c.id, detail: c.name }; }));
+  var known = {};
+  table.dynamicKeys.forEach(function (k) { known[k] = true; });
+  var ignored = {};
+  rows.forEach(function (row) { Object.keys((row && row.values) || {}).forEach(function (k) { if (!known[k]) ignored[k] = true; }); });
+  return { created: created, skipped: skipped, ignoredColumns: Object.keys(ignored) };
+}
+
+// ---------- 操作ログ ----------
+
+var LOG_VALUE_MAX = 80;
+
+function recordName_(entity, obj) {
+  if (entity === 'orgs') return (obj.values && obj.values['団体名']) || obj.id;
+  return obj.name || obj.label || obj[SCHEMA[entity].key] || '';
+}
+
+function logValue_(v) {
+  var s = v === true ? 'TRUE' : v === false ? 'FALSE' : String(v == null ? '' : v);
+  s = s.replace(/\r?\n/g, '⏎');
+  return '「' + (s.length > LOG_VALUE_MAX ? s.slice(0, LOG_VALUE_MAX) + '…' : s) + '」';
+}
+
+// 変わった列を「表示名：「前」→「後」」の形で並べる
+function diffRecord_(s, before, after) {
+  var out = [];
+  s.cols.forEach(function (c) {
+    var p = c[0];
+    if (p === 'updatedAt' || p === 'values' || !(p in after)) return;
+    if (String(before[p]) !== String(after[p])) out.push(c[1] + '：' + logValue_(before[p]) + '→' + logValue_(after[p]));
+  });
+  if (s.dynamic) {
+    Object.keys(after.values || {}).forEach(function (k) {
+      var b = before.values && k in before.values ? before.values[k] : '';
+      if (String(b) !== String(after.values[k])) out.push(k + '：' + logValue_(b) + '→' + logValue_(after.values[k]));
+    });
+  }
+  return out;
+}
+
+function diffChildren_(env, childEntity, parentId, rows) {
+  var s = SCHEMA[childEntity];
+  var current = loadTable_(env, childEntity).records
+    .map(function (r) { return r.obj; })
+    .filter(function (o) { return String(o[s.parentProp]) === String(parentId); });
+  if (childEntity === 'templateFields') {
+    var before = {};
+    current.forEach(function (o) { before[o.fieldKey] = o.content; });
+    var after = {};
+    rows.forEach(function (r) { after[r.fieldKey] = r.content; });
+    var out = [];
+    Object.keys(after).forEach(function (k) {
+      if (!(k in before)) out.push('欄「' + k + '」を追加');
+      else if (before[k] !== after[k]) out.push('欄「' + k + '」を変更');
+    });
+    Object.keys(before).forEach(function (k) { if (!(k in after)) out.push('欄「' + k + '」を削除'); });
+    return out;
+  }
+  var cols = s.cols.map(function (c) { return c[0]; }).filter(function (p) { return p !== s.parentProp; });
+  var sig = function (list) { return JSON.stringify(list.map(function (o) { return cols.map(function (p) { return String(o[p] == null ? '' : o[p]); }); })); };
+  return sig(current) === sig(rows) ? [] : ['欄の構成を変更'];
+}
+
+// 操作ログに書く。記録に失敗しても本来の操作は取り消さない。
+// actor は画面が送る作成者名（本人確認ではなく記録用）。GAS エディタから直接呼んだ場合は req が無い
+function writeLogs_(env, req, entries) {
+  if (!entries.length) return;
+  try {
+    var s = SCHEMA.logs;
+    var table;
+    try {
+      table = loadTable_(env, 'logs');
+    } catch (e) {
+      if (!e || e.appCode !== 'SHEET_MISSING') throw e;
+      env.db.ensureSheet(s.sheet, schemaHeaders_('logs'));
+      table = loadTable_(env, 'logs');
+    }
+    if (!table.headers.length) {
+      env.db.ensureSheet(s.sheet, schemaHeaders_('logs'));
+      table = loadTable_(env, 'logs');
+    }
+    var actor = req ? str_(req.actor).slice(0, 50) || '（名前未入力）' : 'GASエディタ';
+    var role = !req ? '' : safeEqual_(req.adminPass, env.props.adminPassword) ? '管理者' : '利用者';
+    var at = env.now();
+    env.db.appendRows(s.sheet, entries.map(function (e) {
+      return toRow_(table, { at: at, actor: actor, role: role, action: e.action, entity: ENTITY_LABELS[e.entity] || e.entity, key: String(e.key == null ? '' : e.key), detail: String(e.detail || '').slice(0, 2000) });
+    }));
+  } catch (err) {
+    // ログのシートが壊れていても本来の操作は成功させる
+  }
+}
+
+// 新しい順に返す。操作ログのシートがまだ無ければ空
+function actionListLogs_(payload, env) {
+  var limit = Math.min(Math.max(Number(payload.limit) || 300, 1), 2000);
+  var table;
+  try {
+    table = loadTable_(env, 'logs');
+  } catch (e) {
+    if (e && e.appCode === 'SHEET_MISSING') return [];
+    throw e;
+  }
+  // 同じ時刻の行は後に書いたものを先にする
+  return table.records
+    .map(function (r, i) { return { obj: r.obj, i: i }; })
+    .sort(function (a, b) { return a.obj.at < b.obj.at ? 1 : a.obj.at > b.obj.at ? -1 : b.i - a.i; })
+    .map(function (x) { return x.obj; })
+    .slice(0, limit);
 }
 
 // ---------- 書類（PDF / Docx）と告知画像 ----------

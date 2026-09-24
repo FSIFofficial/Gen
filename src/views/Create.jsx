@@ -1,28 +1,12 @@
 import { useEffect, useMemo, useState } from 'preact/hooks'
-import { ArrowLeft, ArrowRight, Check, FileText, Plus, Search, Sparkles } from 'lucide-preact'
+import { ArrowLeft, ArrowRight, Check, FileText, History as HistoryIcon, Plus, Search, Sparkles } from 'lucide-preact'
 import { COMMON_RANK, LOGO_KEY, buildContext, fileReplacements, formItemsFor, generateOutputs, isFileTemplate, isImageTemplate, pickTemplates, renderSegments, splitXThread } from '../lib/engine.js'
-import { Alert, Badge, Button, Eyebrow, ImageUpload, ItemInput, Label, Spinner, StoredImage, activeOnly, card, cx, downloadBase64, inputCls, useApp } from '../ui/ui.jsx'
+import { Alert, Badge, Button, Eyebrow, ImageUpload, ItemInput, Label, Spinner, StoredImage, activeOnly, card, cx, downloadBase64, formatDateTime, inputCls, useApp } from '../ui/ui.jsx'
+import { clearDraft, readAuthor, readDraft, saveAuthor, saveDraft } from '../lib/storage.js'
 import { Output } from './Output.jsx'
 
 const STEPS = ['団体', 'セット・ランク', '案件情報', '出力']
 const TITLES = ['団体を選ぶ', 'セットとランクを選ぶ', '案件情報を入力', '生成結果']
-const AUTHOR_KEY = 'pg-author'
-
-function readAuthor() {
-  try {
-    return localStorage.getItem(AUTHOR_KEY) || ''
-  } catch {
-    return ''
-  }
-}
-
-function saveAuthor(name) {
-  try {
-    localStorage.setItem(AUTHOR_KEY, name)
-  } catch {
-    // 記録用なので保存できなくても続行
-  }
-}
 
 // 履歴出力の行 → { [mediaId]: { templateId, fields } }
 function outputsFromRows(rows) {
@@ -57,6 +41,32 @@ export function Create({ seed }) {
 
   const itemsByKey = useMemo(() => Object.fromEntries(data.items.map((i) => [i.key, i])), [data.items])
   const org = data.orgs.find((o) => o.id === orgId)
+
+  // 入力途中の自動保存。新しく作り始めたときに前回の下書きがあれば「続きから」を出す
+  const [draft, setDraft] = useState(() => (seed.historyId || seed.rebuildFrom ? null : readDraft()))
+  const restoreDraft = () => {
+    const d = draft
+    setDraft(null)
+    const o = data.orgs.find((x) => x.id === d.orgId)
+    if (!o) return notify('下書きの団体が見つかりません（無効化された可能性があります）', 'error')
+    setOrgId(d.orgId)
+    setOrgValues(d.orgValues || { ...o.values })
+    setCaseValues(d.caseValues || {})
+    if (d.setId && data.sets.some((x) => x.id === d.setId)) setSetId(d.setId)
+    if (d.rank && data.ranks.some((x) => x.name === d.rank)) setRank(d.rank)
+    setMediaIds(Array.isArray(d.mediaIds) ? d.mediaIds : null)
+    setStep(Math.min(Math.max(Number(d.step) || 1, 1), 3))
+  }
+  const discardDraft = () => {
+    clearDraft()
+    setDraft(null)
+  }
+  useEffect(() => {
+    // 下書きの確認中（STEP 1 のまま）は前回の下書きを残しておく。出力画面（STEP 4）は履歴に保存済み
+    if ((draft && step === 1) || step > 3 || busy === 'loading' || !orgId) return
+    const timer = setTimeout(() => saveDraft({ orgId, orgValues, caseValues, setId, rank, mediaIds, step, savedAt: new Date().toISOString() }), 400)
+    return () => clearTimeout(timer)
+  }, [orgId, orgValues, caseValues, setId, rank, mediaIds, step, draft, busy])
 
   // 履歴から開く（出力画面を再表示）／作り直す（入力画面へ）
   useEffect(() => {
@@ -121,6 +131,7 @@ export function Create({ seed }) {
 
   const next = () => {
     if (step === 2) fillDefaults()
+    setDraft(null) // 下書きを使わずに進めたら、新しい入力で上書きする
     setStep(step + 1)
   }
 
@@ -157,6 +168,7 @@ export function Create({ seed }) {
       const saved = await api.call('saveHistory', payload)
       setHistoryId(saved.id)
       setOwnHistory(true)
+      clearDraft()
       notify('履歴に保存しました')
       loadHistory().catch(() => {})
     } catch (e) {
@@ -226,6 +238,7 @@ export function Create({ seed }) {
             </div>
           </div>
           <Stepper step={step} />
+          {draft && step === 1 && <DraftBanner draft={draft} onRestore={restoreDraft} onDiscard={discardDraft} />}
         </>
       )}
 
@@ -294,6 +307,31 @@ export function Create({ seed }) {
         </div>
       )}
     </section>
+  )
+}
+
+function DraftBanner({ draft, onRestore, onDiscard }) {
+  const { data } = useApp()
+  const org = data.orgs.find((o) => o.id === draft.orgId)
+  const name = draft.orgValues?.['団体名'] || org?.values['団体名'] || draft.orgId
+  const setName = data.sets.find((s) => s.id === draft.setId)?.name
+  return (
+    <div class="mb-6 flex flex-col gap-3 rounded-2xl border border-[#bcd8f5] bg-[#eef7ff] p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex items-start gap-3">
+        <HistoryIcon class="mt-0.5 size-5 shrink-0 text-[#1261af]" />
+        <div class="text-sm">
+          <p class="font-bold text-[#12233f]">入力途中の資料があります</p>
+          <p class="mt-0.5 text-slate-600">
+            {[name, setName, draft.rank, `STEP ${draft.step}`].filter(Boolean).join(' · ')}
+            {draft.savedAt && <span class="ml-2 text-xs text-slate-400">{formatDateTime(draft.savedAt)} に自動保存</span>}
+          </p>
+        </div>
+      </div>
+      <div class="flex shrink-0 gap-2">
+        <Button variant="outline" size="sm" onClick={onDiscard}>破棄する</Button>
+        <Button size="sm" onClick={onRestore}>続きから</Button>
+      </div>
+    </div>
   )
 }
 

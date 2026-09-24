@@ -1,27 +1,12 @@
-import { useEffect, useState } from 'preact/hooks'
-import { RefreshCw, RotateCcw, Search, Trash2 } from 'lucide-preact'
+import { useState } from 'preact/hooks'
+import { RotateCcw, Search, Trash2 } from 'lucide-preact'
 import { Button, Empty, Eyebrow, card, formatDateTime, useApp } from '../ui/ui.jsx'
 
 export function HistoryView() {
-  const { data, history, loadHistory, setHistory, startCreate, adminCall, notify } = useApp()
+  // 一覧はページを開いたとき（main.jsx の go）とヘッダーの「最新に更新」で読み込み直す
+  const { data, history, setHistory, startCreate, adminCall, notify } = useApp()
   const [query, setQuery] = useState('')
-  const [loading, setLoading] = useState(false)
   const setName = (id) => data.sets.find((s) => s.id === id)?.name || id
-
-  const refresh = async () => {
-    setLoading(true)
-    try {
-      await loadHistory()
-    } catch (e) {
-      notify(e.message, 'error')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    refresh()
-  }, [])
 
   const remove = async (item) => {
     if (!confirm(`「${item.orgName}」の履歴（${item.id}）を削除しますか？この操作は取り消せません。`)) return
@@ -49,7 +34,6 @@ export function HistoryView() {
             <Search class="absolute top-3 left-3 size-4 text-slate-400" />
             <input value={query} onInput={(e) => setQuery(e.currentTarget.value)} placeholder="団体名・セット・作成者で検索" class="h-10 w-full rounded-lg border border-[#dce5f2] bg-white pr-3 pl-9 text-sm md:w-72" />
           </div>
-          <Button variant="outline" icon={RefreshCw} onClick={refresh} disabled={loading} aria-label="再読み込み" />
         </div>
       </div>
       <div class={`mt-8 overflow-hidden ${card}`}>

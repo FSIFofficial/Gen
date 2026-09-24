@@ -20,8 +20,9 @@ function doPost(e) {
   return json_(handleRequest(req, createEnv_()));
 }
 
+// 画面は POST でしか呼ばない。GET で届いたら（POST が途中で GET に変わった場合も）はっきりエラーにする
 function doGet() {
-  return json_({ ok: true, data: { service: 'partner-generator', status: 'running' } });
+  return json_({ ok: false, error: 'USE_POST', message: 'このURLは画面から POST で呼び出します（ブラウザで直接開いた場合や、転送で GET に変わった場合にこの応答になります）' });
 }
 
 function json_(obj) {

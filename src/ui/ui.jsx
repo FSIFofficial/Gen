@@ -158,7 +158,15 @@ export function downloadBase64({ base64, mimeType, fileName }) {
   const binary = atob(base64)
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }))
+  downloadBlob(new Blob([bytes], { type: mimeType }), fileName)
+}
+
+export function downloadText(text, fileName, mimeType = 'text/plain;charset=utf-8') {
+  downloadBlob(new Blob([text], { type: mimeType }), fileName)
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
   a.download = fileName

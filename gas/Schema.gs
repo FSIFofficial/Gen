@@ -54,6 +54,11 @@ var SCHEMA = {
     sheet: '履歴出力', parent: 'history', parentProp: 'historyId',
     cols: [['historyId', '履歴ID'], ['mediaId', '媒体ID'], ['templateId', 'テンプレID'], ['fieldKey', '欄キー'], ['text', '最終文面'], ['edited', '修正あり']],
   },
+  // テンプレートを保存するたびの内容（変更履歴・元に戻す用）。書き込みは GAS だけが行う
+  templateRevisions: {
+    sheet: 'テンプレート履歴',
+    cols: [['templateId', 'テンプレID'], ['at', '保存日時'], ['actor', '保存者'], ['snapshot', '内容（JSON）']],
+  },
   // 変更の記録（追加・編集・無効化・削除）。書き込みは GAS だけが行う
   logs: {
     sheet: '操作ログ',

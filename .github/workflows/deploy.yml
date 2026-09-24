@@ -29,9 +29,22 @@ jobs:
         env:
           ALLOW_MOCK: '1'
 
+  # 画面の通しテスト（モックモードのビルドを Playwright で操作する）
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e
+
   deploy:
     if: github.event_name != 'pull_request'
-    needs: test
+    needs: [test, e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: read

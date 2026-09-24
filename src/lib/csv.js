@@ -61,3 +61,12 @@ export function orgRowsFromTable(table, mapping) {
     return { values }
   })
 }
+
+// 表 → CSV（Excel で文字化けしないよう先頭に BOM を付ける）
+export function toCsv(rows) {
+  const cell = (v) => {
+    const s = String(v ?? '')
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  return '﻿' + rows.map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n'
+}

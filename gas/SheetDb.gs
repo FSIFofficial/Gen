@@ -39,9 +39,18 @@ SheetDb.prototype.updateRow = function (name, index, row) {
   this.sheet_(name).getRange(index + 2, 1, 1, row.length).setValues([row.map(SheetDb.escape_)]);
 };
 
+// 連続した行はまとめて消す（操作ログの整理などで大量に消すときに速い）
 SheetDb.prototype.deleteRows = function (name, indices) {
   var sh = this.sheet_(name);
-  indices.slice().sort(function (a, b) { return b - a; }).forEach(function (i) { sh.deleteRow(i + 2); });
+  var sorted = indices.slice().sort(function (a, b) { return b - a; });
+  var i = 0;
+  while (i < sorted.length) {
+    var end = sorted[i];
+    var start = end;
+    while (i + 1 < sorted.length && sorted[i + 1] === start - 1) start = sorted[++i];
+    sh.deleteRows(start + 2, end - start + 1);
+    i++;
+  }
 };
 
 SheetDb.prototype.insertColumnBefore = function (name, beforeHeader, header) {

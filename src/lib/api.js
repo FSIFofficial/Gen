@@ -7,6 +7,7 @@ const ADMIN_PASS_KEY = 'pg-admin-pass'
 const MESSAGES = {
   UNAUTHORIZED: '利用者キーが正しくありません。管理者に連絡してください。',
   ADMIN_REQUIRED: '管理者パスワードが正しくないか、入力されていません。',
+  ADMIN_LOCKED: '管理者パスワードを続けて間違えたため、しばらく受け付けません。時間をおいてから入力してください。',
   SERVER_NOT_CONFIGURED: 'GAS のスクリプトプロパティ（USER_KEY / ADMIN_PASSWORD）が未設定です。',
   SHEET_MISSING: 'スプレッドシートにシートがありません。GAS エディタで setup() を実行してください。',
   BUSY: 'ほかの保存処理が混み合っています。少し待ってから再度お試しください。',

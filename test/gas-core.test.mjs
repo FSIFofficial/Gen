@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { MemoryDb, createMockDocs, createMockFiles, createMockSlides, loadGasCore } from '../src/lib/memory-db.js'
+import { MemoryDb, createMemoryCache, createMockDocs, createMockFiles, createMockSlides, loadGasCore } from '../src/lib/memory-db.js'
 import { buildContext, documentReplacements, fileReplacements, formItemsFor, generateOutputs, pickTemplates } from '../src/lib/engine.js'
 
 const read = (f) => readFileSync(new URL(`../gas/${f}`, import.meta.url), 'utf8')
@@ -11,18 +11,20 @@ function setup() {
   const db = new MemoryDb()
   gas.seedTables(db, new Date('2026-09-24T00:00:00Z'))
   let t = 0
+  let clock = 0
   const files = createMockFiles()
   const env = {
     db,
     docs: createMockDocs({ ...gas.MOCK_DOCUMENTS, OTHER_DOC: '別の雛形 {{団体名}}' }),
     slides: createMockSlides(gas.MOCK_DOCUMENTS, files),
     files,
+    cache: createMemoryCache(() => clock),
     props: { userKey: 'user-key', adminPassword: 'admin-pass' },
     withLock: (fn) => fn(),
     now: () => new Date(Date.UTC(2026, 8, 24, 0, 0, t++)),
   }
   const call = (action, payload = {}, adminPass, actor) => gas.handleRequest({ action, key: 'user-key', adminPass, actor, payload }, env)
-  return { db, env, call }
+  return { db, env, call, tick: (sec) => (clock += sec * 1000) }
 }
 
 test('認証：キーなし・誤りは UNAUTHORIZED、管理者操作はパス必須', () => {
@@ -292,4 +294,67 @@ test('団体の一括登録：空・重複は飛ばし、まとめて追加す�
   assert.deepEqual(call('listLogs').data.map((l) => [l.action, l.key, l.detail]), [['一括追加', 'O004', '一括B'], ['一括追加', 'O003', '一括A']])
   assert.equal(call('bulkCreate', { entity: 'sets', rows: [{}] }).error, 'BAD_REQUEST')
   assert.equal(call('bulkCreate', { entity: 'orgs', rows: [] }).error, 'VALIDATION')
+})
+
+test('管理者パス：5回続けて間違えると10分止まり、正しいパスで回数が戻る', () => {
+  const { call, tick } = setup()
+  for (let i = 0; i < 4; i++) assert.deepEqual(call('verifyAdmin', {}, 'wrong').data, { valid: false })
+  // 成功すると回数は0に戻る
+  assert.deepEqual(call('verifyAdmin', {}, 'admin-pass').data, { valid: true })
+  for (let i = 0; i < 4; i++) call('verifyAdmin', {}, 'wrong')
+  // 空のパスは数えない
+  assert.equal(call('update', { entity: 'sets', key: 'S001', data: {} }).error, 'ADMIN_REQUIRED')
+  assert.equal(call('update', { entity: 'sets', key: 'S001', data: {} }, 'wrong').error, 'ADMIN_REQUIRED')
+  // 5回目以降は正しいパスでも止まる
+  const locked = call('verifyAdmin', {}, 'admin-pass')
+  assert.equal(locked.error, 'ADMIN_LOCKED')
+  assert.match(locked.message, /10分間/)
+  assert.equal(call('deactivate', { entity: 'sets', key: 'S001' }, 'admin-pass').error, 'ADMIN_LOCKED')
+  // 利用者の操作は止まらない
+  assert.equal(call('init').ok, true)
+  tick(601)
+  assert.deepEqual(call('verifyAdmin', {}, 'admin-pass').data, { valid: true })
+})
+
+test('テンプレートの変更履歴：追加・編集ごとに内容を残し、新しい順に返す', () => {
+  const { call, db } = setup()
+  // 履歴の記録を始める前からあるテンプレートは、最初の編集で変更前も残る
+  call('update', { entity: 'templates', key: 'T001', data: { name: '改名' }, children: { fields: { 件名: '新件名', 本文: '新本文' } } }, 'admin-pass', '山田')
+  let revs = call('listTemplateRevisions', { templateId: 'T001' }).data
+  assert.equal(revs.length, 2)
+  assert.equal(revs[0].actor, '山田')
+  assert.equal(revs[0].template.name, '改名')
+  assert.deepEqual(revs[0].template.fields, { 件名: '新件名', 本文: '新本文' })
+  assert.equal(revs[1].actor, '（履歴の記録開始前）')
+  assert.notEqual(revs[1].template.name, '改名')
+  assert.ok(revs[1].template.fields['本文'].length > 10)
+  // 欄を送らない更新（名前だけ）でも、欄は今の内容のまま残る
+  call('update', { entity: 'templates', key: 'T001', data: { name: '再改名' } }, 'admin-pass')
+  revs = call('listTemplateRevisions', { templateId: 'T001' }).data
+  assert.equal(revs.length, 3)
+  assert.equal(revs[0].template.name, '再改名')
+  assert.deepEqual(revs[0].template.fields, { 件名: '新件名', 本文: '新本文' })
+  // 新規追加も1件目として残る
+  const key = call('create', { entity: 'templates', data: { name: '新', setId: 'S001', mediaId: 'M001', rank: '共通' }, children: { fields: { 本文: 'x' } } }).data.key
+  assert.deepEqual(call('listTemplateRevisions', { templateId: key }).data.map((r) => r.template.fields), [{ 本文: 'x' }])
+  assert.equal(call('listTemplateRevisions', {}).error, 'VALIDATION')
+  // シートが無い本番環境でも自動で作る
+  delete db.sheets['テンプレート履歴']
+  assert.deepEqual(call('listTemplateRevisions', { templateId: 'T002' }).data, [])
+  call('update', { entity: 'templates', key: 'T002', data: { name: 'a' } }, 'admin-pass')
+  assert.equal(call('listTemplateRevisions', { templateId: 'T002' }).data.length, 2)
+})
+
+test('archiveLogs：新しい行だけ残し、古い行を過去分シートに移す', () => {
+  const { call, db } = setup()
+  for (let i = 0; i < 5; i++) call('create', { entity: 'sets', data: { name: `セット${i}` } })
+  assert.equal(gas.archiveLogs(db, 2), 3)
+  assert.deepEqual(call('listLogs').data.map((l) => l.detail), ['セット4', 'セット3'])
+  const archived = db.readTable('操作ログ（過去分）')
+  assert.deepEqual(archived.headers, ['日時', '操作者', '権限', '操作', '種類', '対象', '内容'])
+  assert.deepEqual(archived.rows.map((r) => r[6]), ['セット0', 'セット1', 'セット2'])
+  assert.equal(gas.archiveLogs(db, 2), 0)
+  call('create', { entity: 'sets', data: { name: 'セット5' } })
+  assert.equal(gas.archiveLogs(db, 2), 1)
+  assert.equal(db.readTable('操作ログ（過去分）').rows.length, 4)
 })

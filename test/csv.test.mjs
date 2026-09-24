@@ -25,3 +25,11 @@ test('見出しを項目キー・表示名で対応づけ、行を作る', () =>
   assert.deepEqual(mapping, ['団体名', 'HP', null, null, null])
   assert.deepEqual(orgRowsFromTable([['h'], [' A ', 'https://a.example', 'x']], mapping), [{ values: { 団体名: 'A', HP: 'https://a.example' } }])
 })
+
+test('CSV の書き出し：BOM・引用符・改行、読み込むと元に戻る', async () => {
+  const { toCsv } = await import('../src/lib/csv.js')
+  const rows = [['a', 'b,c'], ['言う"こと"', '1行目\n2行目']]
+  const csv = toCsv(rows)
+  assert.ok(csv.startsWith('﻿a,"b,c"\r\n'))
+  assert.deepEqual(parseDelimited(csv), rows)
+})

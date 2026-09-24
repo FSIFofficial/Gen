@@ -59,10 +59,27 @@ export class MemoryDb {
   }
 }
 
+// gas/Main.gs の CacheService の代わり（管理者パスの連続失敗の回数）。now は現在時刻（ミリ秒）を返す関数
+export function createMemoryCache(now = () => Date.now()) {
+  const store = {}
+  return {
+    get(key) {
+      const e = store[key]
+      return e && e.expires > now() ? e.value : null
+    },
+    put(key, value, seconds) {
+      store[key] = { value: String(value), expires: now() + seconds * 1000 }
+    },
+    remove(key) {
+      delete store[key]
+    },
+  }
+}
+
 // gas/*.gs のソース文字列を評価して、handleRequest などを取り出す
 export function loadGasCore({ schema, mockData, core }) {
   // eslint-disable-next-line no-new-func
-  return new Function(`${schema}\n${mockData}\n${core}\nreturn { handleRequest, seedTables, SCHEMA, MOCK_DATA, MOCK_DOCUMENTS }`)()
+  return new Function(`${schema}\n${mockData}\n${core}\nreturn { handleRequest, seedTables, archiveLogs, SCHEMA, MOCK_DATA, MOCK_DOCUMENTS }`)()
 }
 
 // gas/Main.gs の DocsAdapter の代わり。雛形は MOCK_DOCUMENTS から読み、差し込んだ結果をテキストファイルで返す

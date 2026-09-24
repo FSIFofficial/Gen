@@ -4,6 +4,7 @@
  *   docs は Google ドキュメントの雛形を扱うアダプタ：readText(fileId) / render({ fileId, replacements, format, fileName })
  *   slides は Google スライドの雛形を扱うアダプタ：readText(fileId) / render({ fileId, replacements, images, fileName })
  *   files はロゴなどの画像を保存・読み出すアダプタ：saveImage({ fileName, mimeType, base64 }) / readImage(fileId)
+ *   cache は管理者パスの連続失敗を数える短期キャッシュ：get(key) / put(key, value, seconds) / remove(key)（無ければ制限しない）
  * GAS では Main.gs が SheetDb で env を組み立てる。フロントのモックモードとテストでは MemoryDb を使う。
  */
 
@@ -23,6 +24,7 @@ var ACTIONS = {
   uploadImage: { fn: actionUploadImage_ },
   readImage: { fn: actionReadImage_ },
   listLogs: { fn: actionListLogs_ },
+  listTemplateRevisions: { fn: actionListTemplateRevisions_ },
 };
 
 function handleRequest(req, env) {
@@ -32,7 +34,7 @@ function handleRequest(req, env) {
     if (!def) return fail_('UNKNOWN_ACTION');
     if (!env.props.userKey || !env.props.adminPassword) return fail_('SERVER_NOT_CONFIGURED');
     if (!safeEqual_(req.key, env.props.userKey)) return fail_('UNAUTHORIZED');
-    if (def.admin && !safeEqual_(req.adminPass, env.props.adminPassword)) return fail_('ADMIN_REQUIRED');
+    if (def.admin && !checkAdminPass_(req, env)) return fail_('ADMIN_REQUIRED');
     var payload = req.payload && typeof req.payload === 'object' ? req.payload : {};
     var run = function () { return def.fn(payload, env, req); };
     return { ok: true, data: def.write ? env.withLock(run) : run() };
@@ -52,6 +54,25 @@ function fail_(code, message) {
   var res = { ok: false, error: code };
   if (message && message !== code) res.message = message;
   return res;
+}
+
+// 管理者パスを続けて間違えたら、しばらく受け付けない（総当たり対策）。
+// 回数は全体で数える（GAS では接続元を区別できないため）。止まっている間は正しいパスも受け付けない
+var ADMIN_MAX_FAILS = 5;
+var ADMIN_LOCK_SECONDS = 600;
+var ADMIN_FAIL_KEY = 'admin-pass-fails';
+
+function checkAdminPass_(req, env) {
+  var cache = env.cache;
+  var fails = cache ? Number(cache.get(ADMIN_FAIL_KEY)) || 0 : 0;
+  if (fails >= ADMIN_MAX_FAILS) throw appError_('ADMIN_LOCKED', '管理者パスワードを' + ADMIN_MAX_FAILS + '回続けて間違えたため、' + ADMIN_LOCK_SECONDS / 60 + '分間は受け付けません。時間をおいてから入力してください');
+  var ok = safeEqual_(req.adminPass, env.props.adminPassword);
+  if (cache) {
+    if (ok && fails) cache.remove(ADMIN_FAIL_KEY);
+    // 空のパス（未入力のまま管理者操作を呼んだ場合）は数えない
+    else if (!ok && typeof req.adminPass === 'string' && req.adminPass) cache.put(ADMIN_FAIL_KEY, String(fails + 1), ADMIN_LOCK_SECONDS);
+  }
+  return ok;
 }
 
 function safeEqual_(a, b) {
@@ -322,7 +343,7 @@ function childRows_(entity, children) {
 // ---------- action ----------
 
 function actionVerifyAdmin_(payload, env, req) {
-  return { valid: safeEqual_(req.adminPass, env.props.adminPassword) };
+  return { valid: checkAdminPass_(req, env) };
 }
 
 function actionInit_(payload, env) {
@@ -370,6 +391,7 @@ function actionCreate_(payload, env, req) {
   if (entity === 'items' && obj.category === '団体') ensureOrgColumn_(env, obj.key);
   env.db.appendRows(s.sheet, [toRow_(table, obj)]);
   if (children) replaceChildren_(env, CREATABLE[entity], obj[s.key], children);
+  if (entity === 'templates') saveTemplateRevision_(env, req, obj, children ? fieldsFromRows_(children) : {});
   writeLogs_(env, req, [{ action: '追加', entity: entity, key: obj[s.key], detail: recordName_(entity, obj) }]);
   return { key: obj[s.key] };
 }
@@ -394,10 +416,14 @@ function actionUpdate_(payload, env, req) {
     : CREATABLE[entity] && payload.children ? childRows_(entity, payload.children) : null;
   var changes = diffRecord_(s, rec.obj, obj);
   if (children) changes = changes.concat(diffChildren_(env, CREATABLE[entity], obj[s.key], children));
+  var beforeFields = entity === 'templates' ? currentTemplateFields_(env, obj.id) : null;
+  // 変更履歴を始める前からあるテンプレートは、変更前の内容も残しておく
+  if (entity === 'templates' && !templateRevisions_(env, obj.id).length) saveTemplateRevision_(env, null, rec.obj, beforeFields, rec.obj.updatedAt, '（履歴の記録開始前）');
   if (hasCol_(s, 'updatedAt')) obj.updatedAt = env.now();
   if (entity === 'items' && obj.category === '団体') ensureOrgColumn_(env, obj.key);
   env.db.updateRow(s.sheet, rec.index, toRow_(table, obj));
   if (children) replaceChildren_(env, CREATABLE[entity], obj[s.key], children);
+  if (entity === 'templates') saveTemplateRevision_(env, req, obj, children ? fieldsFromRows_(children) : beforeFields);
   writeLogs_(env, req, [{ action: '編集', entity: entity, key: obj[s.key], detail: recordName_(entity, obj) + '：' + (changes.length ? changes.join(' / ') : '変更なし') }]);
   return { key: obj[s.key] };
 }
@@ -568,25 +594,35 @@ function diffChildren_(env, childEntity, parentId, rows) {
   return sig(current) === sig(rows) ? [] : ['欄の構成を変更'];
 }
 
+function actorName_(req) {
+  return req ? str_(req.actor).slice(0, 50) || '（名前未入力）' : 'GASエディタ';
+}
+
+// あとから足したシート（操作ログ・テンプレート履歴）は、本番に無ければ作ってから読む
+function ensureTable_(env, entity) {
+  var table = loadTableIfExists_(env, entity);
+  if (table && table.headers.length) return table;
+  env.db.ensureSheet(SCHEMA[entity].sheet, schemaHeaders_(entity));
+  return loadTable_(env, entity);
+}
+
+function loadTableIfExists_(env, entity) {
+  try {
+    return loadTable_(env, entity);
+  } catch (e) {
+    if (e && e.appCode === 'SHEET_MISSING') return null;
+    throw e;
+  }
+}
+
 // 操作ログに書く。記録に失敗しても本来の操作は取り消さない。
 // actor は画面が送る作成者名（本人確認ではなく記録用）。GAS エディタから直接呼んだ場合は req が無い
 function writeLogs_(env, req, entries) {
   if (!entries.length) return;
   try {
     var s = SCHEMA.logs;
-    var table;
-    try {
-      table = loadTable_(env, 'logs');
-    } catch (e) {
-      if (!e || e.appCode !== 'SHEET_MISSING') throw e;
-      env.db.ensureSheet(s.sheet, schemaHeaders_('logs'));
-      table = loadTable_(env, 'logs');
-    }
-    if (!table.headers.length) {
-      env.db.ensureSheet(s.sheet, schemaHeaders_('logs'));
-      table = loadTable_(env, 'logs');
-    }
-    var actor = req ? str_(req.actor).slice(0, 50) || '（名前未入力）' : 'GASエディタ';
+    var table = ensureTable_(env, 'logs');
+    var actor = actorName_(req);
     var role = !req ? '' : safeEqual_(req.adminPass, env.props.adminPassword) ? '管理者' : '利用者';
     var at = env.now();
     env.db.appendRows(s.sheet, entries.map(function (e) {
@@ -600,19 +636,84 @@ function writeLogs_(env, req, entries) {
 // 新しい順に返す。操作ログのシートがまだ無ければ空
 function actionListLogs_(payload, env) {
   var limit = Math.min(Math.max(Number(payload.limit) || 300, 1), 2000);
-  var table;
-  try {
-    table = loadTable_(env, 'logs');
-  } catch (e) {
-    if (e && e.appCode === 'SHEET_MISSING') return [];
-    throw e;
-  }
+  var table = loadTableIfExists_(env, 'logs');
+  if (!table) return [];
   // 同じ時刻の行は後に書いたものを先にする
   return table.records
     .map(function (r, i) { return { obj: r.obj, i: i }; })
     .sort(function (a, b) { return a.obj.at < b.obj.at ? 1 : a.obj.at > b.obj.at ? -1 : b.i - a.i; })
     .map(function (x) { return x.obj; })
     .slice(0, limit);
+}
+
+// ---------- テンプレートの変更履歴 ----------
+
+var TEMPLATE_META_PROPS = ['name', 'setId', 'mediaId', 'rank', 'format', 'fileId'];
+
+function fieldsFromRows_(rows) {
+  var out = {};
+  rows.forEach(function (r) { out[r.fieldKey] = r.content; });
+  return out;
+}
+
+function currentTemplateFields_(env, templateId) {
+  return fieldsFromRows_(loadTable_(env, 'templateFields').records
+    .map(function (r) { return r.obj; })
+    .filter(function (o) { return String(o.templateId) === String(templateId); }));
+}
+
+function templateRevisions_(env, templateId) {
+  var table = loadTableIfExists_(env, 'templateRevisions');
+  if (!table) return [];
+  return table.records
+    .map(function (r, i) { return { obj: r.obj, i: i }; })
+    .filter(function (x) { return String(x.obj.templateId) === String(templateId); });
+}
+
+// 保存した時点の内容を1行で残す。記録に失敗しても保存そのものは成功させる
+function saveTemplateRevision_(env, req, t, fields, at, actor) {
+  try {
+    var snapshot = { fields: fields || {} };
+    TEMPLATE_META_PROPS.forEach(function (p) { snapshot[p] = t[p] == null ? '' : t[p]; });
+    var table = ensureTable_(env, 'templateRevisions');
+    env.db.appendRows(SCHEMA.templateRevisions.sheet, [toRow_(table, {
+      templateId: t.id, at: at || env.now(), actor: actor || actorName_(req), snapshot: JSON.stringify(snapshot),
+    })]);
+  } catch (err) {
+    // 変更履歴のシートが壊れていてもテンプレートの保存は成功させる
+  }
+}
+
+// 新しい順。元に戻すときは画面が内容を編集画面に読み込み、管理者が update で保存する
+function actionListTemplateRevisions_(payload, env) {
+  requireText_(payload.templateId, 'テンプレID');
+  return templateRevisions_(env, str_(payload.templateId))
+    .sort(function (a, b) { return a.obj.at < b.obj.at ? 1 : a.obj.at > b.obj.at ? -1 : b.i - a.i; })
+    .slice(0, 100)
+    .map(function (x) {
+      var snapshot = {};
+      try { snapshot = JSON.parse(x.obj.snapshot || '{}'); } catch (e) { snapshot = {}; }
+      return { at: x.obj.at, actor: x.obj.actor, template: snapshot };
+    });
+}
+
+// ---------- 操作ログの整理（毎日の自動処理から呼ぶ） ----------
+
+var LOG_ARCHIVE_SHEET = '操作ログ（過去分）';
+
+/** 操作ログを新しい keep 行だけ残し、古い行を「操作ログ（過去分）」シートに移す。移した行数を返す */
+function archiveLogs(db, keep) {
+  var env = { db: db };
+  var table = loadTableIfExists_(env, 'logs');
+  if (!table) return 0;
+  var old = table.records.slice(0, Math.max(table.records.length - keep, 0));
+  if (!old.length) return 0;
+  db.ensureSheet(LOG_ARCHIVE_SHEET, schemaHeaders_('logs'));
+  var archive = db.readTable(LOG_ARCHIVE_SHEET);
+  var archiveTable = { schema: SCHEMA.logs, fixed: fixedHeaderMap_(SCHEMA.logs), headers: archive.headers.map(function (h) { return String(h).trim(); }) };
+  db.appendRows(LOG_ARCHIVE_SHEET, old.map(function (r) { return toRow_(archiveTable, r.obj); }));
+  db.deleteRows(SCHEMA.logs.sheet, old.map(function (r) { return r.index; }));
+  return old.length;
 }
 
 // ---------- 書類（PDF / Docx）と告知画像 ----------

@@ -1,6 +1,6 @@
 import { render } from 'preact'
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
-import { Check, History as HistoryIcon, Home as HomeIcon, Plus, Settings, ShieldCheck, X } from 'lucide-preact'
+import { Check, History as HistoryIcon, Home as HomeIcon, Plus, RefreshCw, Settings, ShieldCheck, X } from 'lucide-preact'
 import { createApi } from './lib/api.js'
 import { resetMockData } from './lib/mock-backend.js'
 import { AppContext, Alert, Button, Label, Modal, Spinner, cx, inputCls } from './ui/ui.jsx'
@@ -63,6 +63,20 @@ function App() {
     }
   }, [])
 
+  // ほかの人がスプレッドシートを更新したときに、ページを読み込み直さずに最新にする
+  const [refreshing, setRefreshing] = useState(false)
+  const refreshAll = async () => {
+    setRefreshing(true)
+    try {
+      await Promise.all([reload(), loadHistory()])
+      notify('最新のデータに更新しました')
+    } catch (e) {
+      notify(e.message, 'error')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   const startCreate = (preset = {}) => {
     setSeed({ ...preset, id: Date.now() })
     setView('create')
@@ -90,6 +104,18 @@ function App() {
               </span>
             </button>
             <div class="flex items-center gap-2">
+              {data && (
+                <button
+                  onClick={refreshAll}
+                  disabled={refreshing}
+                  title="スプレッドシートから最新のデータを読み込み直します"
+                  aria-label="最新に更新"
+                  class="flex items-center gap-1 rounded-xl px-3 py-2 text-sm font-medium text-slate-500 hover:bg-[#f3f6fb] hover:text-slate-700 disabled:opacity-60"
+                >
+                  <RefreshCw class={cx('size-4', refreshing && 'animate-spin')} />
+                  <span class="hidden md:inline">{refreshing ? '更新中…' : '最新に更新'}</span>
+                </button>
+              )}
               {isAdmin && (
                 <button
                   onClick={() => {

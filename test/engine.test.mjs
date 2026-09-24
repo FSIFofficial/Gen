@@ -45,6 +45,12 @@ test('renderTemplate: 未入力は空にして空行を詰める', () => {
   assert.equal(renderTemplate('A\n\n{{URL}}\n\nB', ctx({})), 'A\n\nB')
 })
 
+test('renderTemplate: 差し込みがすべて未入力の行は見出しごと消す', () => {
+  const tpl = '{{団体名}}と締結しました。\n今回のポイント：{{URL}}\n{{URL}}（{{締結日}}）\n詳細：{{URL}}\n---\n固定の行'
+  assert.equal(renderTemplate(tpl, ctx({ 団体名: 'A', 締結日: '2026-09-24' })), 'Aと締結しました。\n（2026年9月24日）\n---\n固定の行')
+  assert.equal(renderTemplate('{{団体名}}様\n本文', ctx({})), '本文')
+})
+
 test('renderSegments: 差し込み部分と未入力を区別する', () => {
   const seg = renderSegments('こんにちは{{団体名}}{{URL}}', ctx({ 団体名: 'X' }))
   assert.deepEqual(seg, [{ text: 'こんにちは' }, { text: 'X', key: '団体名' }, { text: '［URL］', key: 'URL', missing: true }])

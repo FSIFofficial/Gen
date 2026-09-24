@@ -1,0 +1,92 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # PR ではシークレットを使わず、モックモードでビルドできることだけ確認する
+      - run: npm run build
+        env:
+          ALLOW_MOCK: '1'
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Check secrets
+        env:
+          GAS_URL: ${{ secrets.GAS_URL }}
+          GAS_KEY: ${{ secrets.GAS_KEY }}
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+        run: |
+          for name in GAS_URL GAS_KEY SITE_PASSWORD; do
+            if [ -z "${!name}" ]; then echo "::error::Secrets に $name が設定されていません"; exit 1; fi
+          done
+
+      # GAS の URL と利用者キーを index.html に埋め込む
+      - name: Build
+        env:
+          GAS_URL: ${{ secrets.GAS_URL }}
+          GAS_KEY: ${{ secrets.GAS_KEY }}
+        run: npm run build
+
+      # 出力フォルダ内の全 HTML を StatiCrypt で上書き暗号化する
+      - name: Encrypt with StatiCrypt
+        env:
+          STATICRYPT_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+        run: npm run encrypt
+
+      # 暗号化に失敗して平文の URL・キーが公開されるのを防ぐ
+      - name: Verify no secrets in output
+        env:
+          GAS_URL: ${{ secrets.GAS_URL }}
+          GAS_KEY: ${{ secrets.GAS_KEY }}
+        run: |
+          if grep -rqF -- "$GAS_KEY" dist || grep -rqF -- "$GAS_URL" dist; then
+            echo "::error::暗号化されていない GAS の URL またはキーが出力に含まれています"; exit 1
+          fi
+          if find dist -name '*.js' | grep -q .; then
+            echo "::error::dist に JS ファイルがあります（StatiCrypt で暗号化されません）"; exit 1
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.build/
+config.local.json
+.staticrypt.json
+.clasp.json
+.DS_Store

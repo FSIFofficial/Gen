@@ -1,0 +1,159 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { MemoryDb, loadGasCore } from '../src/lib/memory-db.js'
+import { buildContext, generateOutputs, pickTemplates } from '../src/lib/engine.js'
+
+const read = (f) => readFileSync(new URL(`../gas/${f}`, import.meta.url), 'utf8')
+const gas = loadGasCore({ schema: read('Schema.gs'), mockData: read('MockData.gs'), core: read('Core.gs') })
+
+function setup() {
+  const db = new MemoryDb()
+  gas.seedTables(db, new Date('2026-09-24T00:00:00Z'))
+  let t = 0
+  const env = {
+    db,
+    props: { userKey: 'user-key', adminPassword: 'admin-pass' },
+    withLock: (fn) => fn(),
+    now: () => new Date(Date.UTC(2026, 8, 24, 0, 0, t++)),
+  }
+  const call = (action, payload = {}, adminPass) => gas.handleRequest({ action, key: 'user-key', adminPass, payload }, env)
+  return { db, env, call }
+}
+
+test('認証：キーなし・誤りは UNAUTHORIZED、管理者操作はパス必須', () => {
+  const { env, call } = setup()
+  assert.deepEqual(gas.handleRequest({ action: 'init' }, env), { ok: false, error: 'UNAUTHORIZED' })
+  assert.deepEqual(gas.handleRequest({ action: 'init', key: 'wrong' }, env), { ok: false, error: 'UNAUTHORIZED' })
+  assert.equal(call('update', { entity: 'sets', key: 'S001', data: { name: 'x' } }).error, 'ADMIN_REQUIRED')
+  assert.equal(call('update', { entity: 'sets', key: 'S001', data: { name: 'x' } }, 'bad').error, 'ADMIN_REQUIRED')
+  assert.equal(call('deactivate', { entity: 'sets', key: 'S001' }).error, 'ADMIN_REQUIRED')
+  assert.equal(call('deleteHistory', { id: 'H001' }).error, 'ADMIN_REQUIRED')
+  assert.deepEqual(call('verifyAdmin', {}, 'admin-pass').data, { valid: true })
+  assert.deepEqual(call('verifyAdmin', {}, 'nope').data, { valid: false })
+  assert.equal(call('nope').error, 'UNKNOWN_ACTION')
+})
+
+test('設定が無いサーバーは SERVER_NOT_CONFIGURED', () => {
+  const { env } = setup()
+  env.props.userKey = null
+  assert.equal(gas.handleRequest({ action: 'init', key: '' }, env).error, 'SERVER_NOT_CONFIGURED')
+})
+
+test('init：モックデータが一括で返り、生成まで通る', () => {
+  const { call } = setup()
+  const res = call('init')
+  assert.equal(res.ok, true)
+  const d = res.data
+  assert.equal(d.media.length, 5)
+  assert.equal(d.templates.length, 7)
+  assert.equal(d.media.find((m) => m.id === 'M002').fields[0].countMode, 'X方式')
+  assert.equal(d.media.find((m) => m.id === 'M002').fields[0].limit, 280)
+  assert.equal(d.orgs[0].values['団体名'], 'サンプル団体')
+  assert.ok(d.orgColumns.includes('団体紹介'))
+  assert.equal(d.templates[0].active, true)
+  assert.match(d.templates[0].updatedAt, /^2026-09-24T/)
+
+  const picked = pickTemplates(d.templates, 'S001', 'シルバー')
+  assert.equal(picked.M002.id, 'T003')
+  assert.equal(picked.M004.id, 'T006')
+  const ctx = buildContext({ values: { ...d.orgs[0].values, 締結日: '2026-09-24', 連携内容: '共同イベント' }, items: d.items, settings: d.settings })
+  const out = generateOutputs({ picked: pickTemplates(d.templates, 'S001', 'ゴールド'), mediaIds: ['M002', 'M005'], media: d.media, ctx })
+  assert.match(out.M002.fields['本文'], /9\/24\(木\)、サンプル団体/)
+  assert.match(out.M005.fields['本文'], /^2026\/09\/24/)
+})
+
+test('create：利用者が追加でき、IDが採番される', () => {
+  const { call } = setup()
+  const r = call('create', { entity: 'sets', data: { name: '新セット', order: 2 } })
+  assert.deepEqual(r, { ok: true, data: { key: 'S002' } })
+  const t = call('create', { entity: 'templates', data: { name: '新テンプレ', setId: 'S002', mediaId: 'M001', rank: '共通' }, children: { fields: { 件名: 'a', 本文: 'b' } } })
+  assert.equal(t.data.key, 'T008')
+  const tpl = call('init').data.templates.find((x) => x.id === 'T008')
+  assert.deepEqual(tpl.fields, { 件名: 'a', 本文: 'b' })
+  assert.equal(tpl.format, 'テキスト')
+})
+
+test('create：重複・不正値は弾く', () => {
+  const { call } = setup()
+  assert.equal(call('create', { entity: 'ranks', data: { name: 'ゴールド' } }).error, 'DUPLICATE')
+  assert.equal(call('create', { entity: 'ranks', data: { name: '共通' } }).error, 'VALIDATION')
+  assert.equal(call('create', { entity: 'items', data: { key: 'a{b' } }).error, 'VALIDATION')
+  assert.equal(call('create', { entity: 'items', data: { key: '有効', category: '団体' } }).error, 'VALIDATION')
+  assert.equal(call('create', { entity: 'templates', data: { name: 'x', setId: 'S999', mediaId: 'M001', rank: '共通' } }).error, 'VALIDATION')
+  assert.equal(call('create', { entity: 'history', data: {} }).error, 'BAD_REQUEST')
+})
+
+test('区分＝団体の項目を追加すると団体マスタに列が増える', () => {
+  const { call, db } = setup()
+  call('create', { entity: 'items', data: { key: '設立年', category: '団体', type: '数値' } })
+  const headers = db.readTable('団体マスタ').headers
+  assert.equal(headers.indexOf('設立年'), headers.indexOf('ロゴファイルID') - 1)
+  const org = call('create', { entity: 'orgs', data: { values: { 団体名: '新団体', 設立年: '2020', 存在しない列: 'x' } } })
+  assert.equal(org.data.key, 'O003')
+  const o = call('init').data.orgs.find((x) => x.id === 'O003')
+  assert.equal(o.values['設立年'], '2020')
+  assert.equal(o.values['団体名'], '新団体')
+  assert.ok(!('存在しない列' in o.values))
+  assert.equal(call('create', { entity: 'orgs', data: { values: {} } }).error, 'VALIDATION')
+})
+
+test('update / deactivate：管理者のみ。キーは変更できない', () => {
+  const { call } = setup()
+  const u = call('update', { entity: 'orgs', key: 'O001', data: { values: { 団体紹介: '更新後' } } }, 'admin-pass')
+  assert.equal(u.ok, true)
+  let orgs = call('init').data.orgs
+  assert.equal(orgs[0].values['団体紹介'], '更新後')
+  assert.equal(orgs[0].values['団体名'], 'サンプル団体')
+
+  call('update', { entity: 'ranks', key: 'ゴールド', data: { name: '改名', order: 9 } }, 'admin-pass')
+  const ranks = call('init').data.ranks
+  assert.ok(ranks.some((r) => r.name === 'ゴールド' && r.order === 9))
+
+  call('update', { entity: 'media', key: 'M003', data: { name: 'Insta' }, children: { fields: [{ fieldKey: '本文', limit: 100 }] } }, 'admin-pass')
+  const m = call('init').data.media.find((x) => x.id === 'M003')
+  assert.equal(m.name, 'Insta')
+  assert.deepEqual(m.fields.map((f) => [f.fieldKey, f.limit, f.countMode]), [['本文', 100, '通常']])
+
+  assert.deepEqual(call('deactivate', { entity: 'templates', key: 'T002' }, 'admin-pass').data, { key: 'T002', active: false })
+  assert.equal(call('init').data.templates.find((t) => t.id === 'T002').active, false)
+  assert.equal(call('deactivate', { entity: 'settings', key: '署名' }, 'admin-pass').error, 'BAD_REQUEST')
+  assert.equal(call('update', { entity: 'sets', key: 'S999', data: {} }, 'admin-pass').error, 'NOT_FOUND')
+})
+
+test('履歴：保存・上書き・一覧・詳細・削除', () => {
+  const { call } = setup()
+  const outputs = [
+    { mediaId: 'M001', templateId: 'T001', fieldKey: '件名', text: '件名1', edited: false },
+    { mediaId: 'M001', templateId: 'T001', fieldKey: '本文', text: '本文1', edited: false },
+  ]
+  const history = { author: '見本', orgId: 'O001', orgName: 'サンプル団体', setId: 'S001', rank: 'ゴールド', values: { 締結日: '2026-09-24' } }
+  const first = call('saveHistory', { history, outputs }).data
+  assert.equal(first.id, 'H001')
+  const second = call('saveHistory', { history, outputs }).data
+  assert.equal(second.id, 'H002')
+
+  call('saveHistory', { history: { ...history, id: 'H001' }, outputs: [{ ...outputs[1], text: '修正後', edited: true }] })
+  const h1 = call('getHistory', { id: 'H001' }).data
+  assert.equal(h1.createdAt, first.createdAt)
+  assert.deepEqual(h1.values, { 締結日: '2026-09-24' })
+  assert.deepEqual(h1.outputs.map((o) => [o.fieldKey, o.text, o.edited]), [['本文', '修正後', true]])
+  assert.equal(call('getHistory', { id: 'H002' }).data.outputs.length, 2)
+
+  const list = call('listHistory').data
+  assert.deepEqual(list.map((h) => h.id), ['H002', 'H001'])
+
+  assert.equal(call('deleteHistory', { id: 'H002' }, 'admin-pass').ok, true)
+  assert.deepEqual(call('listHistory').data.map((h) => h.id), ['H001'])
+  assert.equal(call('getHistory', { id: 'H002' }).error, 'NOT_FOUND')
+  assert.equal(call('getHistory', { id: 'H001' }).data.outputs.length, 1)
+  assert.equal(call('saveHistory', { history: { id: 'H999' }, outputs: [] }).error, 'NOT_FOUND')
+})
+
+test('seedTables：既存データがあるシートは上書きしない', () => {
+  const { db, call } = setup()
+  call('create', { entity: 'sets', data: { name: '追加' } })
+  const seeded = gas.seedTables(db, new Date())
+  assert.deepEqual(seeded, [])
+  assert.equal(call('init').data.sets.length, 2)
+})

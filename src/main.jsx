@@ -1,7 +1,7 @@
 import { render } from 'preact'
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
-import { Check, History as HistoryIcon, Home as HomeIcon, Plus, Settings, ShieldCheck, X } from 'lucide-preact'
-import { createApi } from './lib/api.js'
+import { Check, History as HistoryIcon, Home as HomeIcon, Plus, RefreshCw, Settings, ShieldCheck, X } from 'lucide-preact'
+import { checkInitData, createApi } from './lib/api.js'
 import { resetMockData } from './lib/mock-backend.js'
 import { AppContext, Alert, Button, Label, Modal, Spinner, cx, inputCls } from './ui/ui.jsx'
 import { Home } from './views/Home.jsx'
@@ -29,15 +29,22 @@ function App() {
     toastTimer.current = setTimeout(() => setToast(null), tone === 'error' ? 6000 : 2500)
   }, [])
 
+  // 読み込みが重なったとき、遅れて返ってきた古い応答で新しいデータを上書きしないよう、最後に始めた読み込みだけを反映する
+  const dataSeq = useRef(0)
+  const historySeq = useRef(0)
+
   const reload = useCallback(async () => {
-    const d = await api.call('init')
-    setData(d)
+    const n = ++dataSeq.current
+    const d = checkInitData(await api.call('init'))
+    if (n === dataSeq.current) setData(d)
     return d
   }, [])
 
   const loadHistory = useCallback(async () => {
-    const list = await api.call('listHistory')
-    setHistory(list)
+    const n = ++historySeq.current
+    const res = await api.call('listHistory')
+    const list = Array.isArray(res) ? res : []
+    if (n === historySeq.current) setHistory(list)
     return list
   }, [])
 
@@ -63,18 +70,50 @@ function App() {
     }
   }, [])
 
-  const startCreate = (preset = {}) => {
-    setSeed({ ...preset, id: Date.now() })
-    setView('create')
+  // スプレッドシートの内容を読み込み直して最新にする（ページの再読み込みは不要）。
+  // ボタンから押したときは結果を知らせ、ページ移動やタブに戻ったときは裏で静かに行う
+  const [refreshing, setRefreshing] = useState(false)
+  const lastRefresh = useRef(Date.now())
+  const refresh = useCallback(async ({ quiet = false } = {}) => {
+    setRefreshing(true)
+    lastRefresh.current = Date.now()
+    try {
+      await Promise.all([reload(), loadHistory()])
+      if (!quiet) notify('最新のデータに更新しました')
+    } catch (e) {
+      if (!quiet) notify(e.message, 'error')
+    } finally {
+      setRefreshing(false)
+    }
+  }, [])
+
+  // ページ移動のたびに裏で最新にする
+  const go = (next) => {
+    setView(next)
+    refresh({ quiet: true })
   }
 
-  const ctx = { api, data, reload, notify, requireAdmin, adminCall, isAdmin, history, loadHistory, setHistory, startCreate, setView }
+  // スプレッドシートなど別のタブから戻ってきたときも最新にする（30秒以内に更新済みなら省略）
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && data && Date.now() - lastRefresh.current > 30000) refresh({ quiet: true })
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [data])
+
+  const startCreate = (preset = {}) => {
+    setSeed({ ...preset, id: Date.now() })
+    go('create')
+  }
+
+  const ctx = { api, data, reload, notify, requireAdmin, adminCall, isAdmin, history, loadHistory, setHistory, startCreate, setView: go, refreshing }
 
   const nav = [
-    ['home', 'ホーム', HomeIcon, () => setView('home')],
+    ['home', 'ホーム', HomeIcon, () => go('home')],
     ['create', '新規作成', Plus, () => startCreate()],
-    ['history', '履歴', HistoryIcon, () => setView('history')],
-    ['admin', '管理', Settings, () => setView('admin')],
+    ['history', '履歴', HistoryIcon, () => go('history')],
+    ['admin', '管理', Settings, () => go('admin')],
   ]
 
   return (
@@ -82,7 +121,7 @@ function App() {
       <div class="min-h-screen bg-[#f6f8fc] text-[#12233f]">
         <header class="border-b border-[#dce5f2] bg-white">
           <div class="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3 px-5 py-4 lg:px-10">
-            <button onClick={() => setView('home')} class="flex items-center gap-3 text-left">
+            <button onClick={() => go('home')} class="flex items-center gap-3 text-left">
               <span class="flex size-9 items-center justify-center rounded-xl bg-[#102c56] text-sm font-bold text-white">F</span>
               <span>
                 <span class="block text-[15px] font-bold tracking-tight">FSIF｜発信物ジェネレーター</span>
@@ -90,6 +129,18 @@ function App() {
               </span>
             </button>
             <div class="flex items-center gap-2">
+              {data && (
+                <button
+                  onClick={() => refresh()}
+                  disabled={refreshing}
+                  title="スプレッドシートから最新のデータを読み込み直します"
+                  aria-label="最新に更新"
+                  class="flex items-center gap-1 rounded-xl px-3 py-2 text-sm font-medium text-slate-500 hover:bg-[#f3f6fb] hover:text-slate-700 disabled:opacity-60"
+                >
+                  <RefreshCw class={cx('size-4', refreshing && 'animate-spin')} />
+                  <span class="hidden md:inline">{refreshing ? '更新中…' : '最新に更新'}</span>
+                </button>
+              )}
               {isAdmin && (
                 <button
                   onClick={() => {

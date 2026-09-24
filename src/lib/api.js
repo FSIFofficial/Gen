@@ -12,6 +12,16 @@ const MESSAGES = {
   NOT_FOUND: '対象のデータが見つかりません。',
   NETWORK: '通信に失敗しました。ネットワーク接続を確認して、もう一度お試しください。',
   BAD_RESPONSE: 'サーバーから想定外の応答がありました。GAS のデプロイ設定を確認してください。',
+  // 画面からの POST が途中で GET に変わり、doGet の応答が返ってきたとき
+  USE_POST: 'GAS に正しく届きませんでした。Google に複数のアカウントでログインしているとこうなることがあります。シークレットウィンドウ（または使うアカウントだけでログインしたブラウザ）で開き直してください。直らない場合は GitHub の Secrets の GAS_URL が現在のウェブアプリの URL（末尾 /exec）か確認してください。',
+}
+
+// init の応答に必ず入っている一覧。欠けていたら GAS 以外の応答（doGet など）が返ってきている
+const INIT_LISTS = ['templates', 'media', 'sets', 'ranks', 'items', 'dateFormats', 'settings', 'orgs', 'orgColumns']
+
+export function checkInitData(d) {
+  if (!d || typeof d !== 'object' || INIT_LISTS.some((k) => !Array.isArray(d[k]))) throw new ApiError('USE_POST')
+  return d
 }
 
 export class ApiError extends Error {
@@ -72,7 +82,8 @@ export function createApi(config) {
     if (!res || typeof res !== 'object') throw new ApiError('BAD_RESPONSE')
     if (!res.ok) {
       if (res.error === 'ADMIN_REQUIRED') setAdminPass('')
-      throw new ApiError(res.error, res.message)
+      // USE_POST は画面側の説明（対処法つき）を出す
+      throw new ApiError(res.error, res.error === 'USE_POST' ? '' : res.message)
     }
     return res.data
   }

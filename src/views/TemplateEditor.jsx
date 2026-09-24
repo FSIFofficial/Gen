@@ -1,11 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import { ArrowLeft, Calendar, FileText, Save, Scissors } from 'lucide-preact'
+import { ArrowLeft, Calendar, FileText, Plus, Save, Scissors } from 'lucide-preact'
 import { COMMON_RANK, DOCUMENT_FORMATS, IMAGE_FORMAT, LOGO_KEY, buildContext, driveIdFrom, countText, extractKeys, formatDate, mockValues, placeholderAt, renderSegments, splitXThread } from '../lib/engine.js'
 import { Alert, Badge, Button, DocLink, Eyebrow, Label, Modal, Spinner, activeOnly, card, copyText, cx, inputCls, useApp } from '../ui/ui.jsx'
 import { Segments } from './Create.jsx'
 
 const ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画像']
 const SAMPLE_DATE = '2026-09-24'
+
+// セレクトの「＋ 新しく作る…」
+const NEW = '__new__'
+
+// 新しい媒体の欄のひな形
+const MEDIA_PRESETS = [
+  { label: '本文だけ', fields: [{ fieldKey: '本文', label: '本文' }] },
+  { label: '件名＋本文（メールなど）', fields: [{ fieldKey: '件名', label: '件名' }, { fieldKey: '本文', label: '本文' }] },
+  { label: 'タイトル＋本文（note・HPなど）', fields: [{ fieldKey: 'タイトル', label: 'タイトル' }, { fieldKey: '本文', label: '本文' }] },
+  { label: '本文＋ハッシュタグ（Instagramなど）', fields: [{ fieldKey: '本文', label: 'キャプション', limit: 2200 }, { fieldKey: 'ハッシュタグ', label: 'ハッシュタグ' }] },
+  { label: 'Xの投稿（280字・スレッド分割）', fields: [{ fieldKey: '本文', label: '投稿本文', limit: 280, countMode: 'X方式', splitRule: 'スレッド分割' }] },
+]
 
 // 出力形式の種類：テキスト / 書類（Google ドキュメント）/ 告知画像（Google スライド）
 const formatKind = (format) => (format === IMAGE_FORMAT ? 'slides' : DOCUMENT_FORMATS.includes(format) ? 'document' : 'text')
@@ -25,6 +37,7 @@ export function TemplateEditor({ mode, template, onClose }) {
   const [focus, setFocus] = useState(null) // { fieldKey, start, end }
   const [datePicker, setDatePicker] = useState(null) // { key, replace?: placeholder }
   const [unknownPrompt, setUnknownPrompt] = useState(null)
+  const [quickCreate, setQuickCreate] = useState(null) // 'sets' | 'media' | 'ranks'
   const [busy, setBusy] = useState(false)
   const refs = useRef({})
   const pendingCaret = useRef(null)
@@ -179,19 +192,22 @@ export function TemplateEditor({ mode, template, onClose }) {
               <input value={meta.name} onInput={(e) => setMeta({ ...meta, name: e.currentTarget.value })} class={inputCls} />
             </Label>
             <Label label="セット" required>
-              <select value={meta.setId} onChange={(e) => setMeta({ ...meta, setId: e.currentTarget.value })} class={inputCls}>
+              <select value={meta.setId} onChange={(e) => (e.currentTarget.value === NEW ? setQuickCreate('sets') : setMeta({ ...meta, setId: e.currentTarget.value }))} class={inputCls}>
                 {data.sets.map((s) => <option key={s.id} value={s.id}>{s.name}{s.active === false ? '（無効）' : ''}</option>)}
+                <option value={NEW}>＋ 新しいセットを作る…</option>
               </select>
             </Label>
             <Label label="媒体" required>
-              <select value={meta.mediaId} onChange={(e) => setMeta({ ...meta, mediaId: e.currentTarget.value })} class={inputCls}>
+              <select value={meta.mediaId} onChange={(e) => (e.currentTarget.value === NEW ? setQuickCreate('media') : setMeta({ ...meta, mediaId: e.currentTarget.value }))} class={inputCls}>
                 {data.media.map((m) => <option key={m.id} value={m.id}>{m.name}{m.active === false ? '（無効）' : ''}</option>)}
+                <option value={NEW}>＋ 新しい媒体を作る…</option>
               </select>
             </Label>
             <Label label="ランク" required hint="「共通」はランク専用のテンプレートがない場合に使われます">
-              <select value={meta.rank} onChange={(e) => setMeta({ ...meta, rank: e.currentTarget.value })} class={inputCls}>
+              <select value={meta.rank} onChange={(e) => (e.currentTarget.value === NEW ? setQuickCreate('ranks') : setMeta({ ...meta, rank: e.currentTarget.value }))} class={inputCls}>
                 <option value={COMMON_RANK}>{COMMON_RANK}</option>
                 {data.ranks.map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}
+                <option value={NEW}>＋ 新しいランクを作る…</option>
               </select>
             </Label>
             <Label label="出力形式" hint="PDF・Docx は Google ドキュメント、画像は Google スライドの雛形に差し込んで書き出します">
@@ -341,6 +357,18 @@ export function TemplateEditor({ mode, template, onClose }) {
         </Modal>
       )}
 
+      {quickCreate && (
+        <QuickCreateModal
+          kind={quickCreate}
+          fileFormat={isDocument}
+          onClose={() => setQuickCreate(null)}
+          onCreated={(key) => {
+            setMeta({ ...meta, [{ sets: 'setId', media: 'mediaId', ranks: 'rank' }[quickCreate]]: key })
+            setQuickCreate(null)
+          }}
+        />
+      )}
+
       {unknownPrompt && <UnknownItemsModal rows={unknownPrompt} busy={busy} onCancel={() => setUnknownPrompt(null)} onSubmit={registerUnknown} />}
     </section>
   )
@@ -421,6 +449,76 @@ function UnknownItemsModal({ rows: initial, busy, onCancel, onSubmit }) {
             </select>
           </div>
         ))}
+      </div>
+    </Modal>
+  )
+}
+
+// テンプレ編集の途中で、セット・媒体・ランクを新しく作る（追加なので利用者も可）
+function QuickCreateModal({ kind, fileFormat, onClose, onCreated }) {
+  const { api, data, reload, notify } = useApp()
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [preset, setPreset] = useState(0)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const title = { sets: '新しいセット', media: '新しい媒体', ranks: '新しいランク' }[kind]
+  const nextOrder = (list) => Math.max(0, ...list.map((x) => Number(x.order) || 0)) + 1
+
+  const save = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      let payload
+      if (kind === 'sets') payload = { entity: 'sets', data: { name, description, order: nextOrder(data.sets) } }
+      else if (kind === 'ranks') payload = { entity: 'ranks', data: { name, order: nextOrder(data.ranks) } }
+      else {
+        // 書類・告知画像の媒体は「本文」欄ひとつ（雛形の内容を写す欄）
+        const fields = fileFormat ? [{ fieldKey: '本文', label: '内容' }] : MEDIA_PRESETS[preset].fields
+        payload = { entity: 'media', data: { name, order: nextOrder(data.media) }, children: { fields: fields.map((f, i) => ({ countMode: '通常', splitRule: 'なし', limit: '', ...f, order: i + 1 })) } }
+      }
+      const { key } = await api.call('create', payload)
+      await reload()
+      notify(`${title.replace('新しい', '')}「${name}」を追加しました`)
+      onCreated(key)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      title={`${title}を作る`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>キャンセル</Button>
+          <Button icon={busy ? Spinner : Plus} onClick={save} disabled={busy || !name.trim()}>追加して選ぶ</Button>
+        </>
+      }
+    >
+      <div class="grid gap-4">
+        <Label label={{ sets: 'セット名', media: '媒体名', ranks: 'ランク名' }[kind]} required hint={kind === 'ranks' ? `登録後は変更できません。「${COMMON_RANK}」は使えません。` : ''}>
+          <input value={name} onInput={(e) => setName(e.currentTarget.value)} class={inputCls} placeholder={{ sets: '例：Orbit利用開始セット', media: '例：告知画像', ranks: '例：プラチナ' }[kind]} />
+        </Label>
+        {kind === 'sets' && (
+          <Label label="説明">
+            <input value={description} onInput={(e) => setDescription(e.currentTarget.value)} class={inputCls} />
+          </Label>
+        )}
+        {kind === 'media' &&
+          (fileFormat ? (
+            <p class="text-xs text-slate-500">書類・告知画像の媒体として作ります（雛形の内容を入れる欄がひとつ）。</p>
+          ) : (
+            <Label label="欄の構成" hint="出力画面の入力欄とコピーの単位です。細かい設定はあとで管理画面の「媒体」で変えられます（管理者）。">
+              <select value={preset} onChange={(e) => setPreset(Number(e.currentTarget.value))} class={inputCls}>
+                {MEDIA_PRESETS.map((p, i) => <option key={p.label} value={i}>{p.label}</option>)}
+              </select>
+            </Label>
+          ))}
+        {error && <Alert tone="red">{error}</Alert>}
       </div>
     </Modal>
   )

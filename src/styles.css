@@ -1,0 +1,17 @@
+@import 'tailwindcss';
+
+@source './**/*.{js,jsx}';
+
+@theme {
+  --font-sans: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', Meiryo, system-ui, sans-serif;
+}
+
+body {
+  background: #f6f8fc;
+  color: #12233f;
+}
+
+button:not(:disabled),
+[role='button']:not(:disabled) {
+  cursor: pointer;
+}

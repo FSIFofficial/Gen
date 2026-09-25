@@ -15,7 +15,7 @@ var SCHEMA = {
   },
   media: {
     sheet: '媒体', idPrefix: 'M', key: 'id',
-    cols: [['id', '媒体ID'], ['name', '媒体名'], ['order', '並び順'], ['active', '有効']],
+    cols: [['id', '媒体ID'], ['name', '媒体名'], ['order', '並び順'], ['copyFormat', 'コピー形式'], ['active', '有効']],
   },
   mediaFields: {
     sheet: '媒体欄', parent: 'media', parentProp: 'mediaId',
@@ -92,4 +92,6 @@ var IMAGE_FORMAT = '画像';
 // 雛形の図形をロゴ画像に置き換える差し込み（団体マスタのロゴファイルID）
 var LOGO_TOKEN = '{{ロゴ}}';
 var COUNT_MODES = ['通常', 'X方式'];
+// 媒体のコピー形式。CSV行 は欄を並び順に CSV の1行にまとめてコピーできる（サイトのお知らせデータなどに貼る）
+var COPY_FORMATS = ['通常', 'CSV行'];
 var SPLIT_RULES = ['なし', 'スレッド分割'];

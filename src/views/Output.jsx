@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks'
 import { ArrowLeft, ArrowRight, Clipboard, Download, ExternalLink, Image as ImageIcon, Mail, Printer, Save } from 'lucide-preact'
 import { DOCUMENT_FORMATS, countText, isDocumentTemplate, isImageTemplate, splitXThread } from '../lib/engine.js'
+import { csvLine } from '../lib/csv.js'
 import { MAILTO_SAFE_LENGTH, mailtoUrl, xIntentUrl } from '../lib/links.js'
 import { applyStyleRule, findStyleIssues, styleRulesFrom } from '../lib/style-check.js'
 import { Alert, Badge, Button, Eyebrow, Spinner, card, copyText, cx, downloadBase64, useApp } from '../ui/ui.jsx'
@@ -119,6 +120,7 @@ export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBa
               </div>
             </div>
             <div class="space-y-6 p-6">
+              {!isFile && media?.copyFormat === 'CSV行' && <CsvRowBox fieldDefs={fieldDefs} fields={out.fields} />}
               {isImage ? (
                 <ImageField key={active} text={out.fields['本文'] ?? ''} onRender={() => onDownload(active, '画像')} />
               ) : isDocument ? (
@@ -135,6 +137,26 @@ export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBa
         )}
       </div>
     </section>
+  )
+}
+
+// コピー形式「CSV行」の媒体：欄を並び順に1行の CSV にしてコピーする（欄キーが見出し）
+function CsvRowBox({ fieldDefs, fields }) {
+  const { notify } = useApp()
+  const header = fieldDefs.map((f) => f.fieldKey).join(',')
+  const row = csvLine(fieldDefs.map((f) => fields[f.fieldKey] ?? ''))
+  return (
+    <div class="rounded-xl border border-[#cfe3f7] bg-[#f1f8ff] p-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <p class="text-sm font-semibold text-[#1a4f86]">CSV 1行（欄を並び順につなげたもの）</p>
+        <div class="flex gap-2">
+          <Button variant="outline" size="sm" icon={Clipboard} onClick={() => copyText(`${header}\n${row}`, notify)}>見出し付きでコピー</Button>
+          <Button size="sm" icon={Clipboard} onClick={() => copyText(row, notify)}>CSV行をコピー</Button>
+        </div>
+      </div>
+      <pre class="mt-3 max-h-40 overflow-auto rounded-lg border border-[#dce5f2] bg-white p-3 font-mono text-xs leading-5 break-all whitespace-pre-wrap text-slate-600">{row}</pre>
+      <p class="mt-2 text-xs text-slate-500">下の欄を直すと、この行も変わります。値の中の改行は &lt;br&gt; になります。見出し：<span class="font-mono">{header}</span></p>
+    </div>
   )
 }
 

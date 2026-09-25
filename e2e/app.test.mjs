@@ -241,3 +241,29 @@ test('共通パーツ：登録してテンプレートから差し込める', as
   assert.deepEqual(app.errors, [])
   await app.close()
 })
+
+test('コピー形式「CSV行」：欄を1行の CSV にしてコピーできる', async () => {
+  const app = await open()
+  const { page, nav, toast } = app
+  await nav('管理')
+  await page.getByRole('button', { name: '新規追加' }).click()
+  await page.locator('label', { hasText: 'テンプレ名' }).locator('input').fill('HPデータ（共通）')
+  await page.locator('label', { hasText: /^媒体/ }).locator('select').selectOption('__new__')
+  await page.getByPlaceholder('例：告知画像').fill('HPデータ')
+  await page.locator('label', { hasText: '欄の構成' }).locator('select').selectOption({ label: 'CSV 1行（サイトのお知らせデータなど）' })
+  await page.getByRole('button', { name: '追加して選ぶ' }).click()
+  await toast('追加しました')
+  const values = ['sample', '{{団体名}} 様とパートナーシップ締結', '{{締結日:YYYY-MM-DD}}', 'パートナー', '概要', '1行目\n{{団体名}}', '/img/sample.png', 'false']
+  const boxes = page.locator('main textarea')
+  for (let i = 0; i < values.length; i++) await boxes.nth(i).fill(values[i])
+  await page.getByRole('button', { name: '追加', exact: true }).click()
+  await toast('テンプレートを追加しました')
+
+  await generate(app)
+  await page.getByRole('button', { name: 'HPデータ' }).click()
+  await page.getByText('CSV 1行（欄を並び順につなげたもの）').waitFor()
+  const row = await page.locator('main pre').first().innerText()
+  assert.equal(row, 'sample,"サンプル団体 様とパートナーシップ締結",2026-09-24,"パートナー","概要","1行目<br>サンプル団体","/img/sample.png",false')
+  assert.deepEqual(app.errors, [])
+  await app.close()
+})

@@ -33,3 +33,8 @@ test('CSV の書き出し：BOM・引用符・改行、読み込むと元に戻�
   assert.ok(csv.startsWith('﻿a,"b,c"\r\n'))
   assert.deepEqual(parseDelimited(csv), rows)
 })
+
+test('CSV行：改行は <br>、英数字・true/false はそのまま、ほかは引用符', async () => {
+  const { csvLine } = await import('../src/lib/csv.js')
+  assert.equal(csvLine(['lyncs', 'タイトル, 1', '2026-08-20', '1行目\n2行目', "<a href='x'>", 'say "hi"', false, '']), `lyncs,"タイトル, 1",2026-08-20,"1行目<br>2行目","<a href='x'>","say ""hi""",false,""`)
+})

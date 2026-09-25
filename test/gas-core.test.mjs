@@ -379,3 +379,25 @@ test('共通パーツ：追加・編集・無効化。シートが無い本番�
   assert.equal(call('create', { entity: 'parts', data: { name: 'x' } }).ok, true)
   assert.deepEqual(db.readTable('共通パーツ').headers, ['パーツ名', '内容', '説明', '並び順', '有効'])
 })
+
+test('媒体のコピー形式：既定は通常、CSV行を選べる。列が無い本番のシートには足してから書く', () => {
+  const { call, db } = setup()
+  const key = call('create', { entity: 'media', data: { name: 'HPデータ', copyFormat: 'CSV行' }, children: { fields: [{ fieldKey: 'id' }, { fieldKey: 'title' }] } }).data.key
+  let media = call('init').data.media
+  assert.equal(media.find((m) => m.id === key).copyFormat, 'CSV行')
+  assert.equal(call('create', { entity: 'media', data: { name: 'x', copyFormat: 'TSV' } }).error, 'VALIDATION')
+  assert.equal(call('create', { entity: 'media', data: { name: '既定' } }).ok, true)
+  assert.equal(call('init').data.media.find((m) => m.name === '既定').copyFormat, '通常')
+
+  // 「コピー形式」列が無い（この列を足す前に setup した）本番のシート
+  const sh = db.sheets['媒体']
+  const at = sh.headers.indexOf('コピー形式')
+  sh.headers.splice(at, 1)
+  sh.rows.forEach((r) => r.splice(at, 1))
+  assert.equal(call('init').data.media.find((m) => m.id === 'M005').copyFormat, '')
+  call('update', { entity: 'media', key: 'M005', data: { copyFormat: 'CSV行' } }, 'admin-pass')
+  assert.ok(db.readTable('媒体').headers.includes('コピー形式'))
+  media = call('init').data.media
+  assert.equal(media.find((m) => m.id === 'M005').copyFormat, 'CSV行')
+  assert.equal(media.find((m) => m.id === 'M005').name, 'HPニュース')
+})

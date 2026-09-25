@@ -70,3 +70,14 @@ export function toCsv(rows) {
   }
   return '﻿' + rows.map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n'
 }
+
+// 媒体の「コピー形式：CSV行」用。欄の値を並び順に1行の CSV にする（サイトのお知らせデータなどに貼り付ける）。
+// 値の中の改行は <br> にする（1行に収めるため）。true / false・数字・英数字だけの値は引用符で囲まない
+export function csvLine(values) {
+  return values
+    .map((v) => {
+      const s = String(v ?? '').replace(/\r?\n/g, '<br>')
+      return /^(true|false|-?\d+(\.\d+)?|[A-Za-z0-9_-]+)$/.test(s) ? s : `"${s.replace(/"/g, '""')}"`
+    })
+    .join(',')
+}

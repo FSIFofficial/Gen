@@ -18,6 +18,11 @@ const MEDIA_PRESETS = [
   { label: 'タイトル＋本文（note・HPなど）', fields: [{ fieldKey: 'タイトル', label: 'タイトル' }, { fieldKey: '本文', label: '本文' }] },
   { label: '本文＋ハッシュタグ（Instagramなど）', fields: [{ fieldKey: '本文', label: 'キャプション', limit: 2200 }, { fieldKey: 'ハッシュタグ', label: 'ハッシュタグ' }] },
   { label: 'Xの投稿（280字・スレッド分割）', fields: [{ fieldKey: '本文', label: '投稿本文', limit: 280, countMode: 'X方式', splitRule: 'スレッド分割' }] },
+  {
+    label: 'CSV 1行（サイトのお知らせデータなど）',
+    copyFormat: 'CSV行',
+    fields: ['id', 'title', 'date', 'category', 'excerpt', 'content', 'image', 'featured'].map((k) => ({ fieldKey: k, label: k })),
+  },
 ]
 
 // 出力形式の種類：テキスト / 書類（Google ドキュメント）/ 告知画像（Google スライド）
@@ -543,7 +548,7 @@ function QuickCreateModal({ kind, fileFormat, onClose, onCreated }) {
       else {
         // 書類・告知画像の媒体は「本文」欄ひとつ（雛形の内容を写す欄）
         const fields = fileFormat ? [{ fieldKey: '本文', label: '内容' }] : MEDIA_PRESETS[preset].fields
-        payload = { entity: 'media', data: { name, order: nextOrder(data.media) }, children: { fields: fields.map((f, i) => ({ countMode: '通常', splitRule: 'なし', limit: '', ...f, order: i + 1 })) } }
+        payload = { entity: 'media', data: { name, order: nextOrder(data.media), copyFormat: (!fileFormat && MEDIA_PRESETS[preset].copyFormat) || '通常' }, children: { fields: fields.map((f, i) => ({ countMode: '通常', splitRule: 'なし', limit: '', ...f, order: i + 1 })) } }
       }
       const { key } = await api.call('create', payload)
       await reload()

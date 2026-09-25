@@ -95,7 +95,7 @@ export function Usage() {
     <section class="mx-auto max-w-4xl">
       <Eyebrow>GUIDE / HOW TO USE</Eyebrow>
       <h1 class="mt-2 text-3xl font-bold">使い方</h1>
-      <p class="mt-2 text-sm text-slate-500">パートナー締結時の発信物（メール・SNS・HPニュース・契約書・告知画像）を、団体ごとに変わる部分だけ入力してまとめて作るツールです。</p>
+      <p class="mt-2 text-sm text-slate-500"><span class="font-bold text-[#12233f]">kodama</span> は、パートナー締結時の発信物（メール・SNS・HPニュース・契約書・告知画像）を、団体ごとに変わる部分だけ入力してまとめて作るツールです。</p>
       <div class="mt-6"><Toc sections={USAGE_SECTIONS} /></div>
 
       <div class="mt-8 space-y-6">

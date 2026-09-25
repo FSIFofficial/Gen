@@ -1,5 +1,5 @@
 {
-  "name": "partner-generator",
+  "name": "kodama",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,7 +7,7 @@
     "dev": "node scripts/build.mjs --dev",
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.mjs",
-    "encrypt": "staticrypt dist/*.html -d dist -c false --short --remember 30 --template-title 'FSIF｜発信物ジェネレーター' --template-instructions '利用者パスワードを入力してください' --template-button 'ログイン' --template-placeholder 'パスワード' --template-remember 'ログイン状態を30日間保持' --template-error 'パスワードが違います' --template-color-primary '#1261af' --template-color-secondary '#f6f8fc'",
+    "encrypt": "staticrypt dist/*.html -d dist -c false --short --remember 30 --template-title 'kodama' --template-instructions '利用者パスワードを入力してください' --template-button 'ログイン' --template-placeholder 'パスワード' --template-remember 'ログイン状態を30日間保持' --template-error 'パスワードが違います' --template-color-primary '#1261af' --template-color-secondary '#f6f8fc'",
     "e2e": "node --test --test-concurrency=1 e2e/*.test.mjs"
   },
   "dependencies": {

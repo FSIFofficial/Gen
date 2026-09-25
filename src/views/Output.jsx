@@ -53,7 +53,7 @@ export function Output({ outputs, original, mediaIds, meta, saving, onSave, onBa
     const w = window.open('', '_blank')
     if (!w) return
     const body = mediaIds.map((id) => `<h2>${escapeHtml(mediaName(id))}</h2><pre>${escapeHtml(mediaText(data.media.find((m) => m.id === id), outputs[id].fields))}</pre>`).join('')
-    w.document.write(`<html><head><title>${escapeHtml(meta.orgName || '発信物')}｜生成結果</title><style>body{font-family:system-ui,sans-serif;line-height:1.9;max-width:780px;margin:48px auto;color:#172033}h1{font-size:24px}h2{font-size:16px;margin-top:32px;border-bottom:1px solid #dbe5f0;padding-bottom:8px}pre{white-space:pre-wrap;font:inherit}</style></head><body><p>FSIF｜発信物ジェネレーター</p><h1>${escapeHtml(meta.orgName || '生成結果')}｜${escapeHtml(meta.setName || '')}</h1>${body}<script>window.onload=()=>window.print()<\/script></body></html>`)
+    w.document.write(`<html><head><title>${escapeHtml(meta.orgName || '発信物')}｜生成結果</title><style>body{font-family:system-ui,sans-serif;line-height:1.9;max-width:780px;margin:48px auto;color:#172033}h1{font-size:24px}h2{font-size:16px;margin-top:32px;border-bottom:1px solid #dbe5f0;padding-bottom:8px}pre{white-space:pre-wrap;font:inherit}</style></head><body><p>kodama｜FSIF 発信物ジェネレーター</p><h1>${escapeHtml(meta.orgName || '生成結果')}｜${escapeHtml(meta.setName || '')}</h1>${body}<script>window.onload=()=>window.print()<\/script></body></html>`)
     w.document.close()
   }
 

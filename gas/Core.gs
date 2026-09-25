@@ -228,7 +228,7 @@ function str_(v) { return v === undefined || v === null ? '' : String(v).trim();
 
 var EDITABLE_PROPS = {
   templates: ['name', 'setId', 'mediaId', 'rank', 'format', 'fileId'],
-  media: ['name', 'order'],
+  media: ['name', 'order', 'copyFormat'],
   sets: ['name', 'description', 'order'],
   ranks: ['name', 'order'],
   items: ['key', 'label', 'category', 'type', 'options', 'format', 'required', 'defaultValue', 'example', 'order'],
@@ -282,6 +282,8 @@ function validate_(entity, obj, env, table, isCreate) {
     }
     case 'media':
       requireText_(obj.name, '媒体名');
+      if (!obj.copyFormat) obj.copyFormat = '通常';
+      oneOf_(obj.copyFormat, COPY_FORMATS, 'コピー形式');
       break;
     case 'sets':
       requireText_(obj.name, 'セット名');
@@ -387,7 +389,7 @@ function actionInit_(payload, env) {
 function actionCreate_(payload, env, req) {
   var entity = payload.entity;
   if (!Object.prototype.hasOwnProperty.call(CREATABLE, entity)) throw appError_('BAD_REQUEST', '追加できない種類です: ' + entity);
-  var table = ensureTable_(env, entity); // あとから足したシート（共通パーツ）は本番に無ければ作る
+  var table = withAllColumns_(env, ensureTable_(env, entity)); // あとから足したシート・列は本番に無ければ作る
   var s = table.schema;
   var obj = pickData_(entity, payload.data || {});
   validate_(entity, obj, env, table, true);
@@ -408,7 +410,7 @@ function actionCreate_(payload, env, req) {
 function actionUpdate_(payload, env, req) {
   var entity = payload.entity;
   if (!Object.prototype.hasOwnProperty.call(CREATABLE, entity)) throw appError_('BAD_REQUEST', '更新できない種類です: ' + entity);
-  var table = loadTable_(env, entity);
+  var table = withAllColumns_(env, loadTable_(env, entity));
   var s = table.schema;
   var rec = findRecord_(table, payload.key);
   if (!rec) throw appError_('NOT_FOUND', '対象のデータが見つかりません');
@@ -613,6 +615,16 @@ function ensureTable_(env, entity) {
   if (table && table.headers.length) return table;
   env.db.ensureSheet(SCHEMA[entity].sheet, schemaHeaders_(entity));
   return loadTable_(env, entity);
+}
+
+// あとから足した列（媒体の「コピー形式」など）が本番のシートに無ければ、末尾に足してから読み直す。
+// 無いまま書き込むとその値が捨てられるため、追加・更新の前に呼ぶ
+function withAllColumns_(env, table) {
+  var s = table.schema;
+  var missing = s.cols.filter(function (c) { return table.headers.indexOf(c[1]) < 0; });
+  if (!missing.length) return table;
+  env.db.ensureSheet(s.sheet, schemaHeaders_(table.entity, table.dynamicKeys));
+  return loadTable_(env, table.entity);
 }
 
 function loadTableIfExists_(env, entity) {

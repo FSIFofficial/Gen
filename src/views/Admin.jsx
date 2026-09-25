@@ -23,8 +23,13 @@ const ENTITIES = [
   },
   {
     id: 'media', label: '媒体', key: 'id',
-    columns: [['id', 'ID'], ['name', '媒体名'], ['fieldSummary', '欄'], ['order', '並び順']],
-    fields: [{ prop: 'name', label: '媒体名', required: true }, { prop: 'order', label: '並び順', type: 'number' }],
+    columns: [['id', 'ID'], ['name', '媒体名'], ['fieldSummary', '欄'], ['copyFormat', 'コピー形式'], ['order', '並び順']],
+    fields: [
+      { prop: 'name', label: '媒体名', required: true },
+      { prop: 'order', label: '並び順', type: 'number' },
+      { prop: 'copyFormat', label: 'コピー形式', type: 'select', options: ['通常', 'CSV行'], hint: '「CSV行」にすると、出力画面で欄を並び順に1行の CSV にしてコピーできます（欄キーが見出しになります）' },
+    ],
+    defaults: { copyFormat: '通常' },
     children: 'mediaFields',
   },
   {

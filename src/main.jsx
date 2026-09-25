@@ -124,10 +124,10 @@ function App() {
         <header class="border-b border-[#dce5f2] bg-white">
           <div class="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3 px-5 py-4 lg:px-10">
             <button onClick={() => go('home')} class="flex items-center gap-3 text-left">
-              <span class="flex size-9 items-center justify-center rounded-xl bg-[#102c56] text-sm font-bold text-white">F</span>
+              <span class="flex size-9 items-center justify-center rounded-xl bg-[#102c56] text-base font-bold text-white">k</span>
               <span>
-                <span class="block text-[15px] font-bold tracking-tight">FSIF｜発信物ジェネレーター</span>
-                <span class="hidden text-xs text-slate-500 sm:block">Internal communication workspace</span>
+                <span class="block text-[17px] font-bold tracking-tight">kodama</span>
+                <span class="hidden text-xs text-slate-500 sm:block">FSIF｜発信物ジェネレーター</span>
               </span>
             </button>
             <div class="flex items-center gap-2">

@@ -90,6 +90,7 @@ var MOCK_DATA = {
     { key: '運営団体名', value: 'サンプル運営フォーラム', description: '自団体の名称' },
     { key: '公式ハッシュタグ', value: '#サンプル運営 #パートナー', description: 'SNS投稿の末尾に入れるハッシュタグ' },
     { key: '問い合わせ先', value: 'info@example.com', description: '問い合わせ先のメールアドレス' },
+    { key: '表記ルール', value: '御社→貴団体\nパートナーシップ協定→連携協定', description: '出力画面の表記チェック（1行1ルール。「A→B」でAをBに直す提案、矢印なしは見つけたら知らせるだけ）' },
   ],
   orgs: [
     {

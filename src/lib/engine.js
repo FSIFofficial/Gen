@@ -16,6 +16,30 @@ export const isFileTemplate = (t) => isDocumentTemplate(t) || isImageTemplate(t)
 // 告知画像で、図形を団体マスタのロゴ画像に置き換える差し込み。入力項目ではなく組み込み
 export const LOGO_KEY = 'ロゴ'
 
+// 共通パーツ：{{部品:署名ブロック}} で、管理画面の「共通パーツ」に登録した文章を差し込む。
+// パーツの中にも {{団体名}} などの差し込みや別のパーツを書ける（5段まで）
+export const PART_KEY = '部品'
+const PART_RE = /\{\{\s*部品\s*:\s*([^{}]+?)\s*\}\}/g
+
+// parts: { [パーツ名]: 内容 }。登録の無いパーツはそのまま残す（プレビューで未入力として目立たせる）
+export function expandParts(text, parts = {}, depth = 0) {
+  return String(text ?? '').replace(PART_RE, (m, name) => {
+    if (!Object.prototype.hasOwnProperty.call(parts, name)) return m
+    return depth < 5 ? expandParts(parts[name], parts, depth + 1) : ''
+  })
+}
+
+// 使っているのに登録の無いパーツ名
+export function unknownParts(texts, parts = {}) {
+  const names = []
+  for (const text of texts) {
+    for (const m of String(text ?? '').matchAll(PART_RE)) {
+      if (!Object.prototype.hasOwnProperty.call(parts, m[1]) && !names.includes(m[1])) names.push(m[1])
+    }
+  }
+  return names
+}
+
 // Google ドライブの URL でも ID でも受け付けて ID を返す
 export function driveIdFrom(input) {
   const s = String(input || '').trim()
@@ -82,7 +106,7 @@ export function resolveValue(key, format, { values = {}, items = {}, settings = 
 // プレビューで差し込み部分を強調するため、文字列を区切って返す
 // { text } は地の文、{ text, key } は差し込み値、{ text, key, missing: true } は未入力
 export function renderSegments(template, ctx) {
-  const text = String(template ?? '')
+  const text = expandParts(template, ctx.parts)
   const segments = []
   let last = 0
   for (const p of extractPlaceholders(text)) {
@@ -99,7 +123,7 @@ export function renderSegments(template, ctx) {
 // 空行が3行以上続いたら詰める
 export function renderTemplate(template, ctx) {
   const lines = []
-  for (const line of String(template ?? '').split('\n')) {
+  for (const line of expandParts(template, ctx.parts).split('\n')) {
     const segments = renderSegments(line, ctx)
     const inserted = segments.filter((s) => s.key)
     if (inserted.length && inserted.every((s) => s.missing)) continue
@@ -126,6 +150,12 @@ export function fileReplacements(template, ctx, { logoFileId = '', withImages = 
   const replacements = {}
   const images = {}
   for (const p of extractPlaceholders(template)) {
+    // 共通パーツは雛形の {{部品:名前}} をパーツの内容（差し込み済み）で置き換える
+    if (p.key === PART_KEY) {
+      const part = ctx.parts?.[p.format]
+      replacements[p.raw] = part === undefined ? '' : renderDocumentText(part, ctx)
+      continue
+    }
     if (isImageToken(p.key, ctx)) {
       const id = p.key === LOGO_KEY ? logoFileId : driveIdFrom(ctx.values?.[p.key])
       if (withImages) images[p.raw] = id || ''
@@ -250,12 +280,18 @@ export function splitXThread(text, { limit = X_LIMIT, numbering = false } = {}) 
 
 // ---------- 生成 ----------
 
-export function buildContext({ values, items, settings }) {
+export function buildContext({ values, items, settings, parts = [] }) {
   return {
     values,
     items: Object.fromEntries(items.map((i) => [i.key, i])),
     settings: Object.fromEntries(settings.map((s) => [s.key, s.value])),
+    parts: partsMap(parts),
   }
+}
+
+// 有効な共通パーツ → { [パーツ名]: 内容 }
+export function partsMap(parts = []) {
+  return Object.fromEntries(parts.filter((p) => p.active !== false).map((p) => [p.name, p.content ?? '']))
 }
 
 // 媒体ごとに、媒体欄の定義に沿って文面を作る
@@ -276,9 +312,11 @@ export function generateOutputs({ picked, mediaIds, media, ctx }) {
 }
 
 // 入力フォームに出す項目：選んだテンプレで使われている {{ }} だけ
-export function formItemsFor({ picked, mediaIds, items, settings }) {
-  const texts = mediaIds.flatMap((id) => Object.values(picked[id]?.fields || {}))
-  const keys = extractKeys(texts)
+export function formItemsFor({ picked, mediaIds, items, settings, parts = [] }) {
+  const map = partsMap(parts)
+  const raw = mediaIds.flatMap((id) => Object.values(picked[id]?.fields || {}))
+  const texts = raw.map((t) => expandParts(t, map))
+  const keys = extractKeys(texts).filter((k) => k !== PART_KEY)
   const byKey = Object.fromEntries(items.map((i) => [i.key, i]))
   const settingKeys = new Set(settings.map((s) => s.key))
   const used = keys.filter((k) => byKey[k]).map((k) => byKey[k]).sort((a, b) => (a.order === '' ? Infinity : a.order) - (b.order === '' ? Infinity : b.order))
@@ -288,6 +326,7 @@ export function formItemsFor({ picked, mediaIds, items, settings }) {
     settingKeys: keys.filter((k) => !byKey[k] && settingKeys.has(k)),
     unknownKeys: keys.filter((k) => !byKey[k] && !settingKeys.has(k) && k !== LOGO_KEY),
     usesLogo: keys.includes(LOGO_KEY),
+    unknownParts: unknownParts(raw, map),
   }
 }
 

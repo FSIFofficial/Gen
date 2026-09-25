@@ -132,3 +132,27 @@ test('雛形ファイル：画像の差し込みを分け、ドライブの URL 
   // 書類では画像の差し込みは空欄にする
   assert.deepEqual(documentReplacements(tpl, c), { '{{ロゴ}}': '', '{{団体名}}': 'A', '{{写真}}': '' })
 })
+
+test('共通パーツ：{{部品:名前}} を展開し、中の差し込みも解決する', async () => {
+  const { buildContext, expandParts, fileReplacements, formItemsFor, renderSegments, renderTemplate, unknownParts } = await import('../src/lib/engine.js')
+  const parts = [
+    { name: '署名ブロック', content: '――\n{{署名}}\n{{部品:連絡先}}', active: true },
+    { name: '連絡先', content: '担当：{{担当者}}', active: true },
+    { name: '無効', content: 'x', active: false },
+    { name: '自分', content: '{{部品:自分}}', active: true },
+  ]
+  const ctx = buildContext({ values: { 担当者: '山田' }, items: [{ key: '担当者', category: '案件', order: 1 }], settings: [{ key: '署名', value: '事務局' }], parts })
+  assert.equal(expandParts('A\n{{部品:署名ブロック}}', ctx.parts), 'A\n――\n{{署名}}\n担当：{{担当者}}')
+  assert.equal(renderTemplate('本文\n{{部品:署名ブロック}}', ctx), '本文\n――\n事務局\n担当：山田')
+  // 登録の無い・無効のパーツは残り、未入力として扱われる
+  assert.ok(renderSegments('{{部品:無効}}', ctx).some((s) => s.missing))
+  assert.deepEqual(unknownParts(['{{部品:無効}} {{部品:署名ブロック}} {{部品:ない}}'], ctx.parts), ['無効', 'ない'])
+  // 自分自身を呼んでも止まる
+  assert.equal(expandParts('{{部品:自分}}', ctx.parts), '')
+  // 入力フォームにはパーツの中の項目も出る
+  const form = formItemsFor({ picked: { M1: { fields: { 本文: '{{部品:連絡先}}' } } }, mediaIds: ['M1'], items: [{ key: '担当者', category: '案件', order: 1 }], settings: [], parts })
+  assert.deepEqual(form.caseItems.map((i) => i.key), ['担当者'])
+  assert.deepEqual(form.unknownKeys, [])
+  // 書類：雛形の {{部品:名前}} を差し込み済みの内容に置き換える
+  assert.deepEqual(fileReplacements('{{部品:連絡先}}', ctx).replacements, { '{{部品:連絡先}}': '担当：山田' })
+})

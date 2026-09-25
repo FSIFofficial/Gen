@@ -235,6 +235,7 @@ var EDITABLE_PROPS = {
   dateFormats: ['label', 'format', 'order'],
   orgs: ['logoFileId'],
   settings: ['key', 'value', 'description'],
+  parts: ['name', 'content', 'description', 'order'],
 };
 
 function pickData_(entity, data) {
@@ -243,7 +244,7 @@ function pickData_(entity, data) {
     if (!(p in data)) return;
     if (BOOL_PROPS[p]) out[p] = toBool_(data[p], false);
     else if (NUMBER_PROPS[p]) out[p] = normalizeCell_(p, data[p]);
-    else out[p] = p === 'value' || p === 'description' ? String(data[p] == null ? '' : data[p]) : str_(data[p]);
+    else out[p] = p === 'value' || p === 'description' || p === 'content' ? String(data[p] == null ? '' : data[p]) : str_(data[p]);
   });
   if (entity === 'orgs' && data.values && typeof data.values === 'object') {
     out.values = {};
@@ -311,6 +312,11 @@ function validate_(entity, obj, env, table, isCreate) {
     case 'orgs':
       requireText_(obj.values && obj.values['団体名'], '団体名');
       break;
+    case 'parts':
+      requireText_(obj.name, 'パーツ名');
+      if (/[{}:\n\r]/.test(obj.name)) throw appError_('VALIDATION', 'パーツ名に { } : や改行は使えません');
+      duplicate('パーツ名');
+      break;
     case 'settings':
       requireText_(obj.key, '項目キー');
       if (/[{}:\n\r]/.test(obj.key)) throw appError_('VALIDATION', '項目キーに { } : や改行は使えません');
@@ -352,6 +358,8 @@ function actionInit_(payload, env) {
     all[e] = loadTable_(env, e).records.map(function (r) { return r.obj; });
   });
   var orgTable = loadTable_(env, 'orgs');
+  // 共通パーツはあとから足したシート。本番に無ければ空
+  var partTable = loadTableIfExists_(env, 'parts');
   var templates = all.templates.map(function (t) {
     var fields = {};
     all.templateFields.forEach(function (f) { if (f.templateId === t.id) fields[f.fieldKey] = f.content; });
@@ -372,13 +380,14 @@ function actionInit_(payload, env) {
     settings: all.settings,
     orgs: orgTable.records.map(function (r) { return r.obj; }),
     orgColumns: orgTable.dynamicKeys,
+    parts: partTable ? sortByOrder_(partTable.records.map(function (r) { return r.obj; })) : [],
   };
 }
 
 function actionCreate_(payload, env, req) {
   var entity = payload.entity;
   if (!Object.prototype.hasOwnProperty.call(CREATABLE, entity)) throw appError_('BAD_REQUEST', '追加できない種類です: ' + entity);
-  var table = loadTable_(env, entity);
+  var table = ensureTable_(env, entity); // あとから足したシート（共通パーツ）は本番に無ければ作る
   var s = table.schema;
   var obj = pickData_(entity, payload.data || {});
   validate_(entity, obj, env, table, true);

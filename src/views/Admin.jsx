@@ -6,6 +6,9 @@ import { readAuthor, saveAuthor } from '../lib/storage.js'
 import { Alert, Badge, Button, DocLink, Empty, ImageUpload, Eyebrow, ItemInput, Label, Modal, Spinner, card, cx, formatDateTime, inputCls, textareaCls, useApp } from '../ui/ui.jsx'
 import { AddGuide } from './Guide.jsx'
 import { TemplateEditor } from './TemplateEditor.jsx'
+import { Stats } from './Stats.jsx'
+import { SimilarOrgsAlert } from './Create.jsx'
+import { findSimilarOrgs } from '../lib/similar.js'
 
 const ITEM_TYPES = ['短文', '長文', '日付', '選択', '数値', 'URL', '画像']
 const today = () => new Date().toISOString().slice(0, 10)
@@ -65,6 +68,17 @@ const ENTITIES = [
       { prop: 'description', label: '説明' },
     ],
   },
+  {
+    id: 'parts', label: '共通パーツ', key: 'name',
+    columns: [['name', 'パーツ名'], ['description', '説明'], ['content', '内容'], ['order', '並び順']],
+    fields: [
+      { prop: 'name', label: 'パーツ名', required: true, keyField: true, hint: 'テンプレートで {{部品:パーツ名}} として使います。登録後は変更できません。' },
+      { prop: 'content', label: '内容', type: 'textarea', hint: '{{団体名}} や {{署名}} などの差し込みも書けます。直すと、このパーツを使うすべてのテンプレートに反映されます。' },
+      { prop: 'description', label: '説明' },
+      { prop: 'order', label: '並び順', type: 'number' },
+    ],
+  },
+  { id: 'stats', label: '利用状況' },
   { id: 'logs', label: '操作ログ' },
   { id: 'guide', label: '追加方法' },
 ]
@@ -82,6 +96,7 @@ export function Admin() {
       : tab === 'orgs' ? <EntityTab key="orgs" def={orgDef(data)} headerExtra={<BulkOrgButton />} />
         : tab === 'logs' ? <LogList />
           : tab === 'guide' ? <AddGuide />
+            : tab === 'stats' ? <Stats />
           : <EntityTab key={tab} def={def} />
   return (
     <section>
@@ -263,6 +278,7 @@ function EntityForm({ def, mode, record, onClose }) {
   const [error, setError] = useState('')
   const fields = def.fields.filter((f) => !f.show || f.show(obj))
   const missing = fields.filter((f) => f.required && !String(getProp(obj, f.prop) ?? '').trim())
+  const similar = def.id === 'orgs' ? findSimilarOrgs(obj.values?.['団体名'], data.orgs, mode === 'edit' ? record.id : '') : []
 
   const save = async () => {
     setBusy(true)
@@ -306,6 +322,7 @@ function EntityForm({ def, mode, record, onClose }) {
         {fields.map((f) => (
           <FieldInput key={f.prop} field={f} value={getProp(obj, f.prop)} disabled={mode === 'edit' && f.keyField} onChange={(v) => setObj(setProp(obj, f.prop, v))} dateFormats={data.dateFormats} />
         ))}
+        {similar.length > 0 && <SimilarOrgsAlert orgs={similar} />}
         {def.children === 'mediaFields' && <MediaFieldsEditor fields={obj.fields || []} onChange={(list) => setObj({ ...obj, fields: list })} />}
         {error && <Alert tone="red">{error}</Alert>}
       </div>
@@ -605,11 +622,14 @@ function BulkOrgModal({ onClose }) {
                 <tbody>
                   {rows.map((r, i) => {
                     const note = notes[i]
+                    const similar = note ? [] : findSimilarOrgs(r.values['団体名'], data.orgs)
                     return (
                       <tr key={i} class={cx('border-t border-[#f1f4f9]', note && 'text-slate-400')}>
                         <td class="px-3 py-1.5">{i + 1}</td>
                         {mapping.filter(Boolean).map((k) => <td key={k} class="max-w-48 truncate px-3 py-1.5" title={r.values[k]}>{r.values[k]}</td>)}
-                        <td class="px-3 py-1.5 whitespace-nowrap text-amber-700">{note}</td>
+                        <td class="px-3 py-1.5 whitespace-nowrap text-amber-700">
+                          {note || (similar.length > 0 && `似た団体あり：${similar.slice(0, 2).map((o) => o.values['団体名']).join('、')}（登録はします）`)}
+                        </td>
                       </tr>
                     )
                   })}

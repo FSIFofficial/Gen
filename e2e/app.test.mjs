@@ -184,3 +184,60 @@ test('使い方・追加方法のページが開く。スマホ幅で横には�
   assert.deepEqual(app.errors, [])
   await app.close()
 })
+
+test('出力：メールソフト・X で開くボタン、表記チェックで置き換え', async () => {
+  const app = await open()
+  const { page, nav } = app
+  await generate(app)
+  // メール（件名＋本文）はメールソフトで開ける
+  await page.getByRole('button', { name: 'メールソフトで開く' }).waitFor()
+  const body = page.locator('main textarea').first()
+  await body.fill(`${await body.inputValue()}\n御社のご協力に感謝します。`)
+  await page.getByText('表記チェック').waitFor()
+  await page.getByRole('button', { name: '置き換える' }).click()
+  assert.match(await body.inputValue(), /貴団体のご協力/)
+  assert.equal(await page.getByText('表記チェック').count(), 0)
+  // X は1投稿目を投稿画面で開ける
+  await page.getByRole('button', { name: /^X/ }).first().click()
+  const href = await page.getByRole('link', { name: 'Xで開く' }).getAttribute('href')
+  assert.ok(href.startsWith('https://x.com/intent/post?text='))
+  // 利用状況に反映される
+  await nav('管理')
+  await page.getByRole('button', { name: '利用状況' }).click()
+  await page.getByRole('heading', { name: '月ごとの作成数' }).waitFor()
+  // 履歴一覧はページ移動のたびに裏で読み込み直すので、反映されるまで待つ
+  await page.waitForFunction(() => /作成数（全期間）\s*1\s*件/.test(document.querySelector('main').innerText))
+  assert.deepEqual(app.errors, [])
+  await app.close()
+})
+
+test('団体の追加：似た名前の団体があれば警告する', async () => {
+  const app = await open()
+  const { page, nav } = app
+  await nav('新規作成')
+  await page.getByRole('button', { name: '新規団体を追加' }).click()
+  await page.locator('label', { hasText: '団体名' }).locator('input').first().fill('サンプル団体（東京）')
+  await page.getByText(/似た名前の団体がすでに登録されています：「サンプル団体」/).waitFor()
+  assert.deepEqual(app.errors, [])
+  await app.close()
+})
+
+test('共通パーツ：登録してテンプレートから差し込める', async () => {
+  const app = await open()
+  const { page, nav, toast } = app
+  await nav('管理')
+  await page.getByRole('button', { name: /^共通パーツ/ }).click()
+  await page.getByRole('button', { name: '新規追加' }).click()
+  await page.locator('label', { hasText: 'パーツ名' }).locator('input').fill('署名ブロック')
+  await page.locator('label', { hasText: '内容' }).locator('textarea').fill('――――\n{{署名}}')
+  await page.getByRole('button', { name: '追加', exact: true }).click()
+  await toast('追加しました')
+  await page.getByRole('button', { name: /^テンプレート/ }).click()
+  await page.getByRole('button', { name: '新規追加' }).click()
+  await page.locator('main textarea').last().fill('本文です\n')
+  await page.getByRole('button', { name: '署名ブロック', exact: true }).click()
+  assert.match(await page.locator('main textarea').last().inputValue(), /\{\{部品:署名ブロック\}\}/)
+  assert.ok(await page.locator('mark', { hasText: 'サンプル運営事務局' }).count())
+  assert.deepEqual(app.errors, [])
+  await app.close()
+})

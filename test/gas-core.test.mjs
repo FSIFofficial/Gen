@@ -358,3 +358,24 @@ test('archiveLogs：新しい行だけ残し、古い行を過去分シートに
   assert.equal(gas.archiveLogs(db, 2), 1)
   assert.equal(db.readTable('操作ログ（過去分）').rows.length, 4)
 })
+
+test('共通パーツ：追加・編集・無効化。シートが無い本番でも init は空で返し、追加で作る', () => {
+  const { call, db } = setup()
+  assert.deepEqual(call('init').data.parts, [])
+  assert.equal(call('create', { entity: 'parts', data: { name: '署名ブロック', content: '  ――\n{{署名}}\n', order: 1 } }).data.key, '署名ブロック')
+  assert.equal(call('create', { entity: 'parts', data: { name: '署名ブロック' } }).error, 'DUPLICATE')
+  assert.equal(call('create', { entity: 'parts', data: { name: 'a:b' } }).error, 'VALIDATION')
+  let parts = call('init').data.parts
+  assert.deepEqual(parts.map((p) => [p.name, p.content, p.active]), [['署名ブロック', '  ――\n{{署名}}\n', true]])
+  call('update', { entity: 'parts', key: '署名ブロック', data: { content: '新' } }, 'admin-pass')
+  call('deactivate', { entity: 'parts', key: '署名ブロック' }, 'admin-pass')
+  parts = call('init').data.parts
+  assert.equal(parts[0].content, '新')
+  assert.equal(parts[0].active, false)
+  assert.equal(call('listLogs').data[0].entity, '共通パーツ')
+
+  delete db.sheets['共通パーツ']
+  assert.deepEqual(call('init').data.parts, [])
+  assert.equal(call('create', { entity: 'parts', data: { name: 'x' } }).ok, true)
+  assert.deepEqual(db.readTable('共通パーツ').headers, ['パーツ名', '内容', '説明', '並び順', '有効'])
+})

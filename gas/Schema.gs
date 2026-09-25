@@ -46,6 +46,11 @@ var SCHEMA = {
     sheet: '共通設定', key: 'key',
     cols: [['key', '項目キー'], ['value', '値'], ['description', '説明']],
   },
+  // よく使う文章（署名ブロックなど）。テンプレートから {{部品:パーツ名}} で差し込む
+  parts: {
+    sheet: '共通パーツ', key: 'name',
+    cols: [['name', 'パーツ名'], ['content', '内容'], ['description', '説明'], ['order', '並び順'], ['active', '有効']],
+  },
   history: {
     sheet: '履歴', idPrefix: 'H', key: 'id',
     cols: [['id', '履歴ID'], ['createdAt', '作成日時'], ['author', '作成者'], ['orgId', '団体ID'], ['orgName', '団体名（作成時点）'], ['setId', 'セットID'], ['rank', 'ランク'], ['values', '入力値（JSON）'], ['status', 'ステータス']],
@@ -71,10 +76,10 @@ var NUMBER_PROPS = { order: true, limit: true };
 var TIMESTAMP_PROPS = { updatedAt: true, createdAt: true, at: true };
 
 // 利用者が新規追加できるシート（create）。子シートは親と一緒に保存する
-var CREATABLE = { templates: 'templateFields', media: 'mediaFields', sets: null, ranks: null, items: null, dateFormats: null, orgs: null, settings: null };
+var CREATABLE = { templates: 'templateFields', media: 'mediaFields', sets: null, ranks: null, items: null, dateFormats: null, orgs: null, settings: null, parts: null };
 
 // 操作ログの「種類」に書く名前
-var ENTITY_LABELS = { templates: 'テンプレート', media: '媒体', sets: 'セット', ranks: 'ランク', items: '入力項目', dateFormats: '日付書式', orgs: '団体', settings: '共通設定', history: '履歴' };
+var ENTITY_LABELS = { templates: 'テンプレート', media: '媒体', sets: 'セット', ranks: 'ランク', items: '入力項目', dateFormats: '日付書式', orgs: '団体', settings: '共通設定', parts: '共通パーツ', history: '履歴' };
 
 var COMMON_RANK = '共通';
 var ITEM_CATEGORIES = ['団体', '案件'];
